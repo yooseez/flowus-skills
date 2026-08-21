@@ -15,16 +15,16 @@
 - 支持日期参数（昨天/明天/X月X日/YYYY-MM-DD）
 - 创建前检查目标日期是否已有数据
 
-**文件：**
-- `add-template-CLI-SKILL.md` — 技能定义文档
+**文件：** `add-template/`
+- `SKILL.md` — 技能定义文档
 - `parse_and_create.js` — 批量解析与创建脚本
 
-### 添加模版（MCP）
+### 0-添加模版（MCP）
 
 功能与 CLI 版本相同，使用 MCP 协议调用 FlowUs API。
 
-**文件：**
-- `add-template-MCP-SKILL.md` — 技能定义文档
+**文件：** `add-template-mcp/`
+- `SKILL.md` — 技能定义文档
 
 ### 1-生成周报
 
@@ -36,11 +36,11 @@
 - 生成格式化的 Word 周报文档
 - 支持日期参数（上周/本周/X月X日所在周）
 
-**文件：**
-- `generate-weekly-report/SKILL.md` — 技能定义文档
-- `generate-weekly-report/extract_week.py` — 数据提取脚本
-- `generate-weekly-report/gen_week_docx.js` — Word 文档生成脚本
-- `generate-weekly-report/package.json` — 依赖配置
+**文件：** `generate-weekly-report/`
+- `SKILL.md` — 技能定义文档
+- `extract_week.py` — 数据提取脚本
+- `gen_week_docx.js` — Word 文档生成脚本
+- `package.json` — 依赖配置
 
 ### 1-生成月报
 
@@ -52,11 +52,11 @@
 - 生成格式化的 Word 月报文档
 - 支持日期参数（上月/本月/X月）
 
-**文件：**
-- `generate-monthly-report/SKILL.md` — 技能定义文档
-- `generate-monthly-report/extract_month.py` — 数据提取脚本
-- `generate-monthly-report/gen_month_docx.js` — Word 文档生成脚本
-- `generate-monthly-report/package.json` — 依赖配置
+**文件：** `generate-monthly-report/`
+- `SKILL.md` — 技能定义文档
+- `extract_month.py` — 数据提取脚本
+- `gen_month_docx.js` — Word 文档生成脚本
+- `package.json` — 依赖配置
 
 ## 环境要求
 
