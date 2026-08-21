@@ -893,7 +893,7 @@ const doc = new Document({
           alignment: AlignmentType.CENTER,
           spacing: { before: 0, after: 300 },
           children: [
-            new TextRun({ text: `项目周报`, font: FONT, size: 52, bold: true, color: "1a1a1a" }),
+            new TextRun({ text: `项目开发团队周报`, font: FONT, size: 52, bold: true, color: "1a1a1a" }),
           ],
         }),
         new Paragraph({
@@ -1079,7 +1079,9 @@ const doc = new Document({
 });
 
 // ============ Generate ============
-const OUT = `D:\\华为家庭存储\\工作文档\\TIU管理\\周报月报\\weekly-report-${rangeStart}-to-${rangeEnd}.docx`;
+const dateStr1 = `${startYr}年${startMo}月${startDy}日`;
+const dateStr2 = startYr === endYr ? `${endMo}月${endDy}日` : `${endYr}年${endMo}月${endDy}日`;
+const OUT = `D:\\华为家庭存储\\工作文档\\TIU管理\\周报月报\\项目开发团队周报-${dateStr1}-${dateStr2}.docx`;
 
 Packer.toBuffer(doc).then(buffer => {
   fs.writeFileSync(OUT, buffer);

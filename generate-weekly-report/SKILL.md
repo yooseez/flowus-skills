@@ -66,7 +66,7 @@ node "C:\Users\HONOR\.trae-cn\skills\generate-weekly-report\gen_week_docx.js" 20
 ```
 
 - 日期范围参数用于过滤数据
-- 输出文件自动保存到：`D:\华为家庭存储\工作文档\TIU管理\周报月报\weekly-report-YYYY-MM-DD-to-YYYY-MM-DD.docx`
+- 输出文件自动保存到：`D:\华为家庭存储\工作文档\TIU管理\周报月报\项目开发团队周报-YYYY年M月D日-M月D日.docx`（同年仅显示一次年份，跨年两个日期都显示年份）
 
 ### 4. 完成后
 
@@ -81,7 +81,7 @@ node "C:\Users\HONOR\.trae-cn\skills\generate-weekly-report\gen_week_docx.js" 20
 - 添加新成员时：在 USER_MAP 中添加 `uid → "岗位 姓名"`
 
 ### 报告结构
-1. **封面**（纵向）：标题"项目周报" + 日期范围 + 统计概览表
+1. **封面**（纵向）：标题"项目开发团队周报" + 日期范围 + 统计概览表
 2. **一、人员投入统计**：表格（显示"岗位 姓名"）
 3. **二、项目投入统计**：表格（参与人员列只显示姓名，不显示岗位）
 4. **三、人员×项目投入矩阵（工时）**：横向表格（显示"岗位 姓名"，人员列宽14%）
