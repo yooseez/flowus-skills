@@ -417,8 +417,79 @@ function buildPersonSummary() {
   return result;
 }
 
+// Simplify items for project summary: drop detailed lists, merge categories
+function simplifyForProject(items) {
+  let simplified = items.map(item => {
+    if (item.includes("相关工作，包括")) {
+      return item.split("相关工作，包括")[0] + "相关工作";
+    }
+    return item;
+  });
+  simplified = simplified.map(item => {
+    if (/^其他(运维)?相关工作$/.test(item)) {
+      return "运维及其他相关工作";
+    }
+    return item;
+  });
+  const deduped = [...new Set(simplified)];
+  const finalItems = [];
+  let hasOther = false;
+  for (const item of deduped) {
+    if (item === "运维及其他相关工作") {
+      hasOther = true;
+    } else {
+      finalItems.push(item);
+    }
+  }
+  if (hasOther) finalItems.push("运维及其他相关工作");
+  return finalItems;
+}
+
+// Build project-based summary across all persons
+function buildProjectSummary() {
+  const result = [];
+  for (const proj of sortedProjects) {
+    const allItems = [];
+    const seen = new Set();
+    for (const r of data) {
+      for (let i = 0; i < r.projects.length; i++) {
+        const p = r.projects[i];
+        if (p.project === proj) {
+          const progressKey = `progress${i + 1}`;
+          const progressText = r[progressKey];
+          if (progressText) {
+            const lines = progressText.split("\n").filter(l => l.trim());
+            for (const line of lines) {
+              const cleaned = line.trim().replace(/^\d+[、.．]\s*/, "");
+              if (isProgressMeaningful(cleaned) && cleaned.length < 50 && !seen.has(cleaned)) {
+                seen.add(cleaned);
+                allItems.push(cleaned);
+              }
+            }
+          }
+          if (p.task && !seen.has(p.task)) {
+            seen.add(p.task);
+            allItems.push(p.task);
+          }
+        }
+      }
+    }
+    const merged = mergeSimilarItems(allItems);
+    const grouped = groupThemes(merged);
+    const simplified = simplifyForProject(grouped);
+    result.push({
+      name: cleanName(proj),
+      hours: projHours[proj],
+      peopleCount: projPeople[proj].size,
+      items: simplified.map((item, i) => `${i + 1}. ${item}`)
+    });
+  }
+  return result;
+}
+
 // ============ Build Document ============
 const workSummaries = buildPersonSummary();
+const projectSummaries = buildProjectSummary();
 
 const doc = new Document({
   styles: {
@@ -575,8 +646,9 @@ const doc = new Document({
           });
         })(),
 
-        // Section 4: Monthly work summary per person
+        // Section 4: Work summary (by person + by project)
         heading("四、月度工作总结"),
+        new Paragraph({ spacing: { before: 100, after: 60 }, children: [new TextRun({ text: "（一）人员工作总结", font: FONT, size: 22, bold: true })] }),
         ...workSummaries.flatMap(({ person, totalHours, days, projects }) => {
           const paras = [
             new Paragraph({
@@ -597,6 +669,23 @@ const doc = new Document({
                 children: [new TextRun({ text: item, font: FONT, size: 21 })],
               }));
             }
+          }
+          return paras;
+        }),
+        new Paragraph({ spacing: { before: 200, after: 60 }, children: [new TextRun({ text: "（二）项目工作总结", font: FONT, size: 22, bold: true })] }),
+        ...projectSummaries.flatMap(({ name, hours, peopleCount, items }) => {
+          const paras = [
+            new Paragraph({
+              spacing: { before: 80, after: 20 },
+              children: [new TextRun({ text: `${name}  ${hours}工时（合计${pdStr(hours)}人天），${peopleCount}人参与`, font: FONT, size: 22, color: "0066CC", bold: true })],
+            }),
+          ];
+          for (const item of items) {
+            paras.push(new Paragraph({
+              spacing: { before: 20, after: 20 },
+              indent: { left: 480 },
+              children: [new TextRun({ text: item, font: FONT, size: 21 })],
+            }));
           }
           return paras;
         }),
