@@ -636,6 +636,50 @@ function mergeRelatedGroups(items) {
   return [...others, ...result];
 }
 
+// Merge sub-categories into broader catch-all categories
+// e.g., "运维及其他工作" absorbs "运维相关问题处理" since the former already covers all 运维 work
+function mergeSubCategories(items) {
+  const broadCategories = [
+    { label: "运维及其他工作", category: "运维" },
+  ];
+  let result = [...items];
+  for (const { label: broadLabel, category: broadCat } of broadCategories) {
+    if (!result.some(item => getItemLabel(item) === broadLabel)) continue;
+    const absorbedDetails = [];
+    const filtered = [];
+    let broadItem = null;
+    for (const item of result) {
+      const label = getItemLabel(item);
+      if (label === broadLabel) {
+        if (!broadItem) {
+          broadItem = item;
+        } else {
+          const d = getItemDetails(item);
+          if (d) absorbedDetails.push(d.replace(/^：包括/, "").replace(/等$/, ""));
+        }
+        continue;
+      }
+      if (label.endsWith("相关问题处理") && classifyWork(item) === broadCat) {
+        const d = getItemDetails(item);
+        if (d) absorbedDetails.push(d.replace(/^：包括/, "").replace(/等$/, ""));
+        continue;
+      }
+      filtered.push(item);
+    }
+    if (broadItem) {
+      if (absorbedDetails.length > 0) {
+        const existingDetails = getItemDetails(broadItem);
+        const existingContent = existingDetails ? existingDetails.replace(/^：包括/, "").replace(/等$/, "") : "";
+        const allContent = [...absorbedDetails, existingContent].filter(d => d).join("、");
+        broadItem = allContent ? `${broadLabel}：包括${allContent}等` : broadLabel;
+      }
+      filtered.push(broadItem);
+    }
+    result = filtered;
+  }
+  return result;
+}
+
 // Unified simplification for both personnel and project summaries
 // keepDetails=true (personnel): keep "XX：包括A、B等" format
 // keepDetails=false (project): strip to just category label
@@ -649,15 +693,15 @@ function simplifySummary(items, keepDetails = false) {
     return item;
   });
   // Process main labels: merge problem/other categories into "运维及其他工作"
-  // Skip for items with details when keepDetails=true (preserve "XX相关工作：包括..." format)
+  // Always rename broad categories even when preserving details
   simplified = simplified.map(item => {
     const label = getItemLabel(item);
     const details = getItemDetails(item);
-    if (keepDetails && details) return item;
     if (label === "问题处理相关工作" || label === "其他运维相关工作" ||
         label === "其他相关工作" || label === "运维及其他相关工作") {
       return "运维及其他工作" + details;
     }
+    if (keepDetails && details) return item;
     return item;
   });
   // Rename "XX相关工作" → "XX相关问题处理" (except "运维及其他工作")
@@ -705,6 +749,8 @@ function simplifySummary(items, keepDetails = false) {
   }
   // Merge related thematic groups
   simplified = mergeRelatedGroups(simplified);
+  // Merge sub-categories into broader catch-all categories (e.g., 运维相关问题处理 → 运维及其他工作)
+  simplified = mergeSubCategories(simplified);
   // Dedup and move "运维及其他工作" to end
   const deduped = [...new Set(simplified)];
   const finalItems = [];
@@ -819,6 +865,7 @@ function buildProjectSummary() {
       name: cleanProj,
       hours: projHours[proj],
       peopleCount: projPeople[proj].size,
+      people: Array.from(projPeople[proj]).sort().map(p => cleanPerson(p)).join("、"),
       items: items.map((item, i) => `${i + 1}. ${item}`)
     });
   }
@@ -985,12 +1032,12 @@ const doc = new Document({
         })(),
 
         // Section 4: Work summary by person
-        heading("四、月度工作总结（按人员）"),
+        heading("四、人员月度工作总结"),
         ...workSummaries.flatMap(({ person, totalHours, days, projects }) => {
           const paras = [
             new Paragraph({
               spacing: { before: 80, after: 20 },
-              children: [new TextRun({ text: `${person}  ${totalHours}工时（合计${pdStr(totalHours)}人天），填报${days}次`, font: FONT, size: 22, color: "0066CC", bold: true })],
+              children: [new TextRun({ text: `${person}  ${totalHours}工时（合计${pdStr(totalHours)}人天），总共填报${days}次`, font: FONT, size: 22, color: "0066CC", bold: true })],
             }),
           ];
           for (const { name, hours, days: pdays, items } of projects) {
@@ -1011,12 +1058,12 @@ const doc = new Document({
         }),
 
         // Section 5: Work summary by project
-        heading("五、月度工作总结（按项目）"),
-        ...projectSummaries.flatMap(({ name, hours, peopleCount, items }) => {
+        heading("五、项目月度工作总结"),
+        ...projectSummaries.flatMap(({ name, hours, peopleCount, people, items }) => {
           const paras = [
             new Paragraph({
               spacing: { before: 80, after: 20 },
-              children: [new TextRun({ text: `${name}  ${hours}工时（合计${pdStr(hours)}人天），${peopleCount}人参与`, font: FONT, size: 22, bold: true })],
+              children: [new TextRun({ text: `${name}  ${hours}工时（合计${pdStr(hours)}人天），${peopleCount}人参与（${people}）`, font: FONT, size: 22, bold: true })],
             }),
           ];
           for (const item of items) {
