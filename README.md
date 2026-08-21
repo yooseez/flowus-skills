@@ -1,6 +1,6 @@
 # FlowUs 技能集
 
-用于 TRAE 的 FlowUs 日报数据自动创建技能。
+用于 TRAE 的 FlowUs 日报数据自动创建和报表生成技能。
 
 ## 技能列表
 
@@ -26,11 +26,50 @@
 **文件：**
 - `add-template-MCP-SKILL.md` — 技能定义文档
 
+### 1-生成周报
+
+从 FlowUs 日报数据自动生成项目周报 Word 文档。
+
+**核心功能：**
+- 查询指定周的日报数据
+- 按项目/任务汇总实际投入和计划人天
+- 生成格式化的 Word 周报文档
+- 支持日期参数（上周/本周/X月X日所在周）
+
+**文件：**
+- `generate-weekly-report/SKILL.md` — 技能定义文档
+- `generate-weekly-report/extract_week.py` — 数据提取脚本
+- `generate-weekly-report/gen_week_docx.js` — Word 文档生成脚本
+- `generate-weekly-report/package.json` — 依赖配置
+
+### 1-生成月报
+
+从 FlowUs 日报数据自动生成项目月报 Word 文档。
+
+**核心功能：**
+- 查询指定月的日报数据
+- 按项目/任务汇总实际投入和计划人天
+- 生成格式化的 Word 月报文档
+- 支持日期参数（上月/本月/X月）
+
+**文件：**
+- `generate-monthly-report/SKILL.md` — 技能定义文档
+- `generate-monthly-report/extract_month.py` — 数据提取脚本
+- `generate-monthly-report/gen_month_docx.js` — Word 文档生成脚本
+- `generate-monthly-report/package.json` — 依赖配置
+
 ## 环境要求
 
 - Node.js
+- Python 3（周报月报技能需要）
 - FlowUs CLI（路径：`C:\Users\HONOR\AppData\Local\Programs\FlowUs\bin\flowus.exe`）
 - FlowUs 集成权限（`pages.write`）
+
+## 安装使用
+
+1. 将对应技能文件夹放入 TRAE 项目的 `.trae/skills/` 目录下
+2. 周报/月报技能需在对应目录执行 `npm install` 安装依赖
+3. 在 TRAE 中输入技能触发词即可使用
 
 ## 关键技术点
 
