@@ -57,16 +57,16 @@ python "C:\Users\HONOR\.trae-cn\skills\generate-weekly-report\extract_week.py" 2
 确保 `docx` npm 包可用（首次使用时运行 `npm install docx`），然后执行：
 
 ```bash
-node "<技能目录>/gen_week_docx.js" <startDY> <endDY> <data_file>
+node "<技能目录>/gen_week_docx.js" <start_YYYY-MM-DD> <end_YYYY-MM-DD> <data_file>
 ```
 
 示例：
 ```bash
-node "C:\Users\HONOR\.trae-cn\skills\generate-weekly-report\gen_week_docx.js" 3 7 "C:\Users\HONOR\.trae-cn\skills\generate-weekly-report\week_data.json"
+node "C:\Users\HONOR\.trae-cn\skills\generate-weekly-report\gen_week_docx.js" 2026-08-03 2026-08-07 "C:\Users\HONOR\.trae-cn\skills\generate-weekly-report\week_data.json"
 ```
 
-- `startDY` / `endDY`：日期的"日"部分（如3和7），用于过滤API可能返回的额外日期
-- 输出文件自动保存到：`D:\华为家庭存储\工作文档\TIU管理\周报月报\weekly-report-YYYY-MMDD-MMDD.docx`
+- 日期范围参数用于过滤数据
+- 输出文件自动保存到：`D:\华为家庭存储\工作文档\TIU管理\周报月报\weekly-report-YYYY-MM-DD-to-YYYY-MM-DD.docx`
 
 ### 4. 完成后
 
@@ -82,17 +82,24 @@ node "C:\Users\HONOR\.trae-cn\skills\generate-weekly-report\gen_week_docx.js" 3 
 
 ### 报告结构
 1. **封面**（纵向）：标题"项目周报" + 日期范围 + 统计概览表
-2. **一、项目投入统计**：表格（参与人员列只显示姓名，不显示岗位）
-3. **二、人员投入统计**：表格（显示"岗位 姓名"）
-4. **三、人员×项目投入矩阵（h）**：横向表格（显示"岗位 姓名"，人员列宽14%）
-5. **四、本周工作总结**：按人员+项目汇总一周工作（不是每日单独列出）
+2. **一、人员投入统计**：表格（显示"岗位 姓名"）
+3. **二、项目投入统计**：表格（参与人员列只显示姓名，不显示岗位）
+4. **三、人员×项目投入矩阵（工时）**：横向表格（显示"岗位 姓名"，人员列宽14%）
+5. **四、本周工作总结（按人员）**：按人员+项目汇总，系列任务显示详细列表
+6. **五、本周工作总结（按项目）**：按项目汇总，简化为类别名称
 - ❌ **不含"下周工作计划"**
 
 ### 工作总结格式
-- 格式：`岗位 姓名（总工时h，参与X天）：项目名（工时h，参与X天）：主要工作内容`
+- 人员行格式：`岗位 姓名  工时数工时（合计X人天），填报X次`
+- 项目行格式：`项目名  工时数工时（合计X人天），填报X次` / `X人参与`
+- 工作项编号显示，系列任务格式：`XX相关工作：包括A、B、C等`（冒号分隔）
 - 优先从进展说明提取工作内容，过滤纯进度状态（如`100%`、`（未开发）`）
 - 进展说明不明确时，回退到任务名称字段
-- 相似任务名称自动合并（共同前缀≥5字时保留较短的）
+- 相似任务自动合并（共同前缀≥4字合并为"XX相关工作"）
+- 3+项共享2字前缀的自动归组为系列，显示详细列表
+- "XX相关工作"在人员总结中保留原始格式和详细列表
+- "XX相关工作"在项目总结中简化为"XX相关问题处理"
+- 过滤纯提交脚本/代码类任务（如"提交脚本以及代码到公司环境"）
 
 ### FlowUs API 参数
 - 数据库ID: `1a9c4392-b5ae-48f4-aa3b-e05135215dce`
