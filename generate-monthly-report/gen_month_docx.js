@@ -482,7 +482,7 @@ const doc = new Document({
           rows: [
             makeRow([
               headerCell("人员", { width: 2000 }),
-              headerCell("投入工时（h）", { width: 2000 }),
+              headerCell("投入工时（人天）", { width: 2000 }),
               headerCell("填报天数", { width: 1500 }),
               headerCell("参与项目", { width: 3500 }),
             ]),
@@ -490,14 +490,14 @@ const doc = new Document({
               const projects = Array.from(personProjects[person]).sort();
               return makeRow([
                 cell(person, { width: 2000 }),
-                cell(`${personHours[person]}`, { width: 2000 }),
+                cell(`${personHours[person]}（${(personHours[person] / 8).toFixed(1)}）`, { width: 2000 }),
                 cell(`${personDays[person].size}`, { width: 1500 }),
                 cell(projects.map(n => cleanName(n)).join("、"), { width: 3500, alignment: AlignmentType.LEFT }),
               ]);
             }),
             makeRow([
               cell("合计", { width: 2000, bold: true, shading: "F0F0F0" }),
-              cell(`${totalHours}`, { width: 2000, bold: true, shading: "F0F0F0" }),
+              cell(`${totalHours}（${(totalHours / 8).toFixed(1)}）`, { width: 2000, bold: true, shading: "F0F0F0" }),
               cell("-", { width: 1500, shading: "F0F0F0" }),
               cell("-", { width: 3500, shading: "F0F0F0" }),
             ]),
@@ -512,7 +512,7 @@ const doc = new Document({
           rows: [
             makeRow([
               headerCell("项目", { width: 2500 }),
-              headerCell("投入工时（h）", { width: 2000 }),
+              headerCell("投入工时（人天）", { width: 2000 }),
               headerCell("参与人数", { width: 1500 }),
               headerCell("参与人员", { width: 3000 }),
             ]),
@@ -520,14 +520,14 @@ const doc = new Document({
               const people = Array.from(projPeople[proj]).sort();
               return makeRow([
                 cell(cleanName(proj), { width: 2500, alignment: AlignmentType.LEFT }),
-                cell(`${projHours[proj]}`, { width: 2000 }),
+                cell(`${projHours[proj]}（${(projHours[proj] / 8).toFixed(1)}）`, { width: 2000 }),
                 cell(`${projPeople[proj].size}`, { width: 1500 }),
                 cell(people.map(p => cleanPerson(p)).join("、"), { width: 3000, alignment: AlignmentType.LEFT }),
               ]);
             }),
             makeRow([
               cell("合计", { width: 2500, bold: true, shading: "F0F0F0" }),
-              cell(`${totalHours}`, { width: 2000, bold: true, shading: "F0F0F0" }),
+              cell(`${totalHours}（${(totalHours / 8).toFixed(1)}）`, { width: 2000, bold: true, shading: "F0F0F0" }),
               cell("-", { width: 1500, shading: "F0F0F0" }),
               cell("-", { width: 3000, shading: "F0F0F0" }),
             ]),
