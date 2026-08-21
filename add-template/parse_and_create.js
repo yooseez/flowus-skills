@@ -8,16 +8,7 @@ const SET_FILL_DATE = process.argv[3] === 'true';
 const SKIP_CHECK = process.argv[4] === 'skip';
 const RESULT_FILE = (process.argv[4] === 'skip' || process.argv[4] === 'noskip') ? process.argv[5] : process.argv[4];
 
-const raw = fs.readFileSync(RESULT_FILE, 'utf8');
-const jsonStr = raw.replace(/^\uFEFF/, '').replace(/^#< CLIXML\s*/, '').split('\n<Objs')[0];
-const data = JSON.parse(jsonStr);
-const records = data.data.results;
-
-function getAutoDate(r) {
-  const fillDate = r.properties['填报日期']?.date?.start;
-  if (fillDate) return fillDate.includes('T') ? fillDate.split('T')[0].replace(/\//g, '-') : fillDate.replace(/\//g, '-');
-  return r.created_time.split('T')[0];
-}
+const QUERY_BODY_FILE = process.argv[6] || '';
 
 function callAPI(method, path, body) {
   const bodyPath = `C:\\Users\\HONOR\\AppData\\Local\\Temp\\flowus_api_${Date.now()}_${Math.random().toString(36).substr(2,5)}.json`;
@@ -26,6 +17,57 @@ function callAPI(method, path, body) {
   const output = result.stdout || '';
   const clean = output.replace(/^\uFEFF/, '').replace(/^#< CLIXML\s*/, '').split('\n<Objs')[0];
   try { return JSON.parse(clean); } catch(e) { return { ok: false, error: e.message }; }
+}
+
+// 分页查询：自动获取所有结果，直到 has_more=false
+function queryAllPages(queryBodyFile) {
+  const raw = fs.readFileSync(queryBodyFile, 'utf8');
+  const body = JSON.parse(raw);
+  let allResults = [];
+  let startCursor = null;
+  let pageNum = 0;
+
+  while (true) {
+    pageNum++;
+    const pageBody = { ...body };
+    if (startCursor) {
+      pageBody.start_cursor = startCursor;
+    }
+
+    const bodyPath = `C:\\Users\\HONOR\\AppData\\Local\\Temp\\flowus_query_page_${pageNum}_${Date.now()}.json`;
+    fs.writeFileSync(bodyPath, JSON.stringify(pageBody));
+
+    const result = spawnSync(CLI, ['--json', 'api', 'call', 'POST', `/v2/databases/${DB_ID}/query`, '--body', bodyPath], { encoding: 'utf8', timeout: 30000 });
+    const output = result.stdout || '';
+    const clean = output.replace(/^\uFEFF/, '').replace(/^#< CLIXML\s*/, '').split('\n<Objs')[0];
+    const parsed = JSON.parse(clean);
+
+    if (!parsed.ok || !parsed.data) break;
+    allResults = allResults.concat(parsed.data.results);
+
+    if (!parsed.data.has_more) break;
+    startCursor = parsed.data.next_cursor;
+  }
+
+  return allResults;
+}
+
+// 如果传入了第7个参数（查询 body 文件路径），则执行分页查询获取全部数据
+// 否则继续使用 RESULT_FILE（兼容旧调用方式）
+let records;
+if (QUERY_BODY_FILE) {
+  records = queryAllPages(QUERY_BODY_FILE);
+} else {
+  const raw = fs.readFileSync(RESULT_FILE, 'utf8');
+  const jsonStr = raw.replace(/^\uFEFF/, '').replace(/^#< CLIXML\s*/, '').split('\n<Objs')[0];
+  const data = JSON.parse(jsonStr);
+  records = data.data.results;
+}
+
+function getAutoDate(r) {
+  const fillDate = r.properties['填报日期']?.date?.start;
+  if (fillDate) return fillDate.includes('T') ? fillDate.split('T')[0].replace(/\//g, '-') : fillDate.replace(/\//g, '-');
+  return r.created_time.split('T')[0];
 }
 
 if (!SKIP_CHECK) {
@@ -83,8 +125,6 @@ console.log(`CREATED: ${success}`);
 console.log(`FAILED: ${failed}`);
 
 // 建立反向关联：把新记录 ID 添加到原任务的"同步任务名称"字段
-// API 创建记录时只设置了单向的"任务名称"关联，不会自动更新原任务的"同步任务名称"反向关联
-// 需要手动把新记录 ID 追加到原任务的"同步任务名称"relation 列表中，rollup 公式才能正确计算
 if (createdPages.length > 0) {
   console.log('\nBuilding reverse relations...');
   const taskCache = {};
@@ -92,7 +132,6 @@ if (createdPages.length > 0) {
 
   for (const { pageId, taskId } of createdPages) {
     try {
-      // 读取原任务当前的"同步任务名称"列表（同一个任务只读一次）
       if (!taskCache[taskId]) {
         const taskRes = callAPI('GET', `/v2/pages/${taskId}`, {});
         if (!taskRes.ok) { reverseFail++; continue; }
@@ -100,10 +139,8 @@ if (createdPages.length > 0) {
         taskCache[taskId] = syncRel.map(r => r.id);
       }
 
-      // 如果新记录 ID 已在列表中则跳过
       if (taskCache[taskId].includes(pageId)) { reverseOk++; continue; }
 
-      // 追加新记录 ID 并更新原任务
       const newRelations = [...taskCache[taskId].map(id => ({ id })), { id: pageId }];
       const updateRes = callAPI('PATCH', `/v2/pages/${taskId}`, {
         properties: { '同步任务名称': { type: 'relation', relation: newRelations } }
