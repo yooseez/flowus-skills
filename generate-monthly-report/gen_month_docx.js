@@ -117,6 +117,11 @@ function p(text, opts = {}) {
   });
 }
 
+function pdStr(hours) {
+  const pd = Math.round(hours / 8 * 10) / 10;
+  return Number.isInteger(pd) ? String(pd) : pd.toFixed(1);
+}
+
 function heading(text, level = HeadingLevel.HEADING_2) {
   return new Paragraph({
     heading: level,
@@ -490,14 +495,14 @@ const doc = new Document({
               const projects = Array.from(personProjects[person]).sort();
               return makeRow([
                 cell(person, { width: 2000 }),
-                cell(`${personHours[person]}（${(personHours[person] / 8).toFixed(1)}）`, { width: 2000 }),
+                cell(`${personHours[person]}（${pdStr(personHours[person])}）`, { width: 2000 }),
                 cell(`${personDays[person].size}`, { width: 1500 }),
                 cell(projects.map(n => cleanName(n)).join("、"), { width: 3500, alignment: AlignmentType.LEFT }),
               ]);
             }),
             makeRow([
               cell("合计", { width: 2000, bold: true, shading: "F0F0F0" }),
-              cell(`${totalHours}（${(totalHours / 8).toFixed(1)}）`, { width: 2000, bold: true, shading: "F0F0F0" }),
+              cell(`${totalHours}（${pdStr(totalHours)}）`, { width: 2000, bold: true, shading: "F0F0F0" }),
               cell("-", { width: 1500, shading: "F0F0F0" }),
               cell("-", { width: 3500, shading: "F0F0F0" }),
             ]),
@@ -520,14 +525,14 @@ const doc = new Document({
               const people = Array.from(projPeople[proj]).sort();
               return makeRow([
                 cell(cleanName(proj), { width: 2500, alignment: AlignmentType.LEFT }),
-                cell(`${projHours[proj]}（${(projHours[proj] / 8).toFixed(1)}）`, { width: 2000 }),
+                cell(`${projHours[proj]}（${pdStr(projHours[proj])}）`, { width: 2000 }),
                 cell(`${projPeople[proj].size}`, { width: 1500 }),
                 cell(people.map(p => cleanPerson(p)).join("、"), { width: 3000, alignment: AlignmentType.LEFT }),
               ]);
             }),
             makeRow([
               cell("合计", { width: 2500, bold: true, shading: "F0F0F0" }),
-              cell(`${totalHours}（${(totalHours / 8).toFixed(1)}）`, { width: 2000, bold: true, shading: "F0F0F0" }),
+              cell(`${totalHours}（${pdStr(totalHours)}）`, { width: 2000, bold: true, shading: "F0F0F0" }),
               cell("-", { width: 1500, shading: "F0F0F0" }),
               cell("-", { width: 3000, shading: "F0F0F0" }),
             ]),
@@ -535,7 +540,7 @@ const doc = new Document({
         }),
 
         // Section 3: Person-Project matrix - use PERCENTAGE width to avoid compression
-        heading("三、人员×项目投入矩阵（h）"),
+        heading("三、人员×项目投入矩阵（工时）"),
         (() => {
           const namePct = 14;       // 14% for person name column (wider to fit "后端 马少平" without wrapping)
           const totalPct = 8;       // 8% for total column
@@ -576,14 +581,14 @@ const doc = new Document({
           const paras = [
             new Paragraph({
               spacing: { before: 80, after: 20 },
-              children: [new TextRun({ text: `${person}（${totalHours}h，参与${days}天）：`, font: FONT, size: 22, color: "0066CC", bold: true })],
+              children: [new TextRun({ text: `${person}  ${totalHours}工时（合计${pdStr(totalHours)}人天），填报${days}次`, font: FONT, size: 22, color: "0066CC", bold: true })],
             }),
           ];
           for (const { name, hours, days: pdays, items } of projects) {
             paras.push(new Paragraph({
               spacing: { before: 40, after: 20 },
               indent: { left: 120 },
-              children: [new TextRun({ text: `${name}（${hours}h，参与${pdays}天）`, font: FONT, size: 21, bold: true })],
+              children: [new TextRun({ text: `${name}  ${hours}工时（合计${pdStr(hours)}人天），填报${pdays}次`, font: FONT, size: 21, bold: true })],
             }));
             for (const item of items) {
               paras.push(new Paragraph({
