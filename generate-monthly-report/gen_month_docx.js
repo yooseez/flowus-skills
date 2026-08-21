@@ -1081,7 +1081,7 @@ const doc = new Document({
 });
 
 // ============ Generate ============
-const OUT = `D:\\华为家庭存储\\工作文档\\TIU管理\\周报月报\\monthly-report-${rangeStart}-to-${rangeEnd}-v8.docx`;
+const OUT = `D:\\华为家庭存储\\工作文档\\TIU管理\\周报月报\\monthly-report-${rangeStart}-to-${rangeEnd}.docx`;
 
 Packer.toBuffer(doc).then(buffer => {
   fs.writeFileSync(OUT, buffer);
