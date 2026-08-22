@@ -360,7 +360,7 @@ function groupThemes(items) {
 
         const groupItems = groupIndices.map(idx => items[idx]);
         const suffix = determineSuffix(groupItems);
-        if (groupItems.length < 6) {
+        if (groupItems.length < 8) {
           const parts = groupItems.map(item => {
             let rest = item.startsWith(displayName) ? item.substring(displayName.length) : item;
             return stripActionSuffix(rest);
@@ -371,11 +371,11 @@ function groupThemes(items) {
             result.push(label);
             explicitListingMap.set(label, combineSuffix(displayName, suffix));
           } else {
-            const itemsToList = groupItems.sort((a, b) => a.length - b.length).slice(0, 5);
+            const itemsToList = groupItems.sort((a, b) => a.length - b.length).slice(0, 7);
             result.push(`${combineSuffix(displayName, suffix)}：包括${itemsToList.join("、")}等`);
           }
         } else {
-          const itemsToList = groupItems.sort((a, b) => a.length - b.length).slice(0, 5);
+          const itemsToList = groupItems.sort((a, b) => a.length - b.length).slice(0, 7);
           result.push(`${displayName}相关工作：包括${itemsToList.join("、")}等`);
         }
         groupIndices.forEach(idx => used.add(idx));
@@ -419,7 +419,7 @@ function mergeByPrefix(items) {
           result.push(prefix + "优化");
         } else {
           const dynSuffix = determineSuffix(group);
-          if (group.length < 6) {
+          if (group.length < 8) {
             const parts = group.map(item => {
               let rest = item.startsWith(prefix) ? item.substring(prefix.length) : item;
               return stripActionSuffix(rest);
@@ -430,11 +430,11 @@ function mergeByPrefix(items) {
               result.push(label);
               explicitListingMap.set(label, combineSuffix(prefix, dynSuffix));
             } else {
-              const itemsToList = group.sort((a, b) => a.length - b.length).slice(0, 5);
+              const itemsToList = group.sort((a, b) => a.length - b.length).slice(0, 7);
               result.push(`${combineSuffix(prefix, dynSuffix)}：包括${itemsToList.join("、")}等`);
             }
           } else {
-            const itemsToList = group.sort((a, b) => a.length - b.length).slice(0, 5);
+            const itemsToList = group.sort((a, b) => a.length - b.length).slice(0, 7);
             result.push(`${prefix}相关工作：包括${itemsToList.join("、")}等`);
           }
         }
@@ -923,15 +923,6 @@ function simplifySummary(items, keepDetails = false) {
     if (keepDetails && details) return item;
     return item;
   });
-  // For project summaries (keepDetails=false): simplify <6 explicit listing to "XX相关{suffix}"
-  if (!keepDetails) {
-    simplified = simplified.map(item => {
-      if (explicitListingMap.has(item)) {
-        return explicitListingMap.get(item);
-      }
-      return item;
-    });
-  }
   // Clean up "问题" redundancy in main label
   // Skip for items with details when keepDetails=true
   simplified = simplified.map(item => {
@@ -1326,7 +1317,25 @@ const dateStr2 = startYr === endYr ? `${endMo}月${endDy}日` : `${endYr}年${en
 const OUT = `D:\\华为家庭存储\\工作文档\\TIU管理\\周报月报\\项目开发团队周报-${dateStr1}-${dateStr2}.docx`;
 
 Packer.toBuffer(doc).then(buffer => {
-  fs.writeFileSync(OUT, buffer);
-  console.log(`Generated: ${OUT}`);
+  let outPath = OUT;
+  try {
+    fs.writeFileSync(outPath, buffer);
+  } catch (e) {
+    if (e.code === 'EBUSY' || e.code === 'EPERM') {
+      const base = OUT.replace(/\.docx$/, '');
+      for (let v = 2; v <= 20; v++) {
+        try {
+          outPath = `${base}-v${v}.docx`;
+          fs.writeFileSync(outPath, buffer);
+          break;
+        } catch (e2) {
+          if (e2.code !== 'EBUSY' && e2.code !== 'EPERM') throw e2;
+        }
+      }
+    } else {
+      throw e;
+    }
+  }
+  console.log(`Generated: ${outPath}`);
   console.log(`Size: ${(buffer.length / 1024).toFixed(1)} KB`);
 });
