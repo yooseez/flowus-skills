@@ -293,8 +293,17 @@ function stripActionSuffix(item) {
     .replace(/(模块)?(功能)?开发$/, "")
     .replace(/问题?处理$/, "")
     .replace(/(功能)?(开发|调整|改造|优化|修改|完善|测试|验证|发布)$/, "")
-    .replace(/(模块)?功能$/, "");
-  return stripped.length > 0 ? stripped : item;
+    .replace(/(模块)?功能$/, "")
+    .replace(/模块$/, "")
+    .replace(/迁移$/, "");
+  return stripped;
+}
+
+// Check if a stripped part is meaningful (not a common action word, not too short)
+function isMeaningfulPart(part) {
+  if (!part || part.length < 2) return false;
+  const commonWords = /^(开发|模块开发|功能开发|调整|改造|优化|修改|完善|测试|验证|发布|模块|功能|迁移|处理|问题)$/i;
+  return !commonWords.test(part);
 }
 
 // Map from <6 explicit listing to simplified label for project summaries
@@ -320,12 +329,14 @@ function groupThemes(items) {
     if (used.has(i)) continue;
     const iLabel = getItemLabel(items[i]);
     if (iLabel.includes("相关") || iLabel === "运维及其他工作") continue;
+    if (iLabel.startsWith("处理")) continue;
 
     const groupIndices = [i];
     for (let j = i + 1; j < items.length; j++) {
       if (used.has(j)) continue;
       const jLabel = getItemLabel(items[j]);
       if (jLabel.includes("相关") || jLabel === "运维及其他工作") continue;
+      if (jLabel.startsWith("处理")) continue;
       const prefix = commonPrefix(items[i], items[j]);
       if (prefix.length >= 2) {
         groupIndices.push(j);
@@ -354,9 +365,9 @@ function groupThemes(items) {
             let rest = item.startsWith(displayName) ? item.substring(displayName.length) : item;
             return stripActionSuffix(rest);
           });
-          const validParts = parts.filter(p => p.length > 0);
-          if (validParts.length === groupItems.length) {
-            const label = `${displayName}${validParts.join("、")}等${suffix}`;
+          const meaningfulParts = parts.filter(p => isMeaningfulPart(p));
+          if (meaningfulParts.length === groupItems.length) {
+            const label = `${displayName}${meaningfulParts.join("、")}等${suffix}`;
             result.push(label);
             explicitListingMap.set(label, combineSuffix(displayName, suffix));
           } else {
@@ -413,9 +424,9 @@ function mergeByPrefix(items) {
               let rest = item.startsWith(prefix) ? item.substring(prefix.length) : item;
               return stripActionSuffix(rest);
             });
-            const validParts = parts.filter(p => p.length > 0);
-            if (validParts.length === group.length) {
-              const label = `${prefix}${validParts.join("、")}等${dynSuffix}`;
+            const meaningfulParts = parts.filter(p => isMeaningfulPart(p));
+            if (meaningfulParts.length === group.length) {
+              const label = `${prefix}${meaningfulParts.join("、")}等${dynSuffix}`;
               result.push(label);
               explicitListingMap.set(label, combineSuffix(prefix, dynSuffix));
             } else {
@@ -432,6 +443,84 @@ function mergeByPrefix(items) {
       }
     }
     result.push(items[i]);
+  }
+  return result;
+}
+
+// Merge pairs of already-grouped items sharing 2+ char common prefix
+function mergePairedGroups(items) {
+  const used = new Set();
+  const result = [];
+
+  function extractParts(item, commonPrefix) {
+    const label = getItemLabel(item);
+    let parts = [];
+    if (item.includes("：包括")) {
+      const detailStart = item.indexOf("：包括") + 3;
+      const detailEnd = item.lastIndexOf("等");
+      if (detailStart >= 3 && detailEnd > detailStart) {
+        const detail = item.substring(detailStart, detailEnd);
+        parts = detail.split("、").map(d => {
+          let rest = d.startsWith(commonPrefix) ? d.substring(commonPrefix.length) : d;
+          return stripActionSuffix(rest);
+        });
+      }
+    } else if (label.includes("等")) {
+      const etcIdx = label.lastIndexOf("等");
+      const partsStr = label.substring(commonPrefix.length, etcIdx);
+      parts = partsStr.split("、").map(p => {
+        let rest = p.startsWith(commonPrefix) ? p.substring(commonPrefix.length) : p;
+        return stripActionSuffix(rest);
+      });
+    }
+    return parts.filter(p => isMeaningfulPart(p));
+  }
+
+  for (let i = 0; i < items.length; i++) {
+    if (used.has(i)) continue;
+    const iLabel = getItemLabel(items[i]);
+    const iGrouped = iLabel.includes("相关") ||
+      (iLabel.includes("等") && /功能开发$|相关问题处理$|功能$/.test(iLabel));
+
+    let mergeTarget = -1;
+    if (iGrouped) {
+      for (let j = i + 1; j < items.length; j++) {
+        if (used.has(j)) continue;
+        const jLabel = getItemLabel(items[j]);
+        const jGrouped = jLabel.includes("相关") ||
+          (jLabel.includes("等") && /功能开发$|相关问题处理$|功能$/.test(jLabel));
+        if (!jGrouped) continue;
+        const prefix = commonPrefix(iLabel, jLabel);
+        if (prefix.length >= 2) {
+          mergeTarget = j;
+          break;
+        }
+      }
+    }
+
+    if (mergeTarget >= 0) {
+      const jLabel = getItemLabel(items[mergeTarget]);
+      const prefix = commonPrefix(iLabel, jLabel);
+      const suffixes = ["功能开发及相关问题处理", "相关问题处理", "功能开发", "功能"];
+      let suffix = "功能";
+      for (const s of suffixes) {
+        if (iLabel.endsWith(s) || jLabel.endsWith(s)) { suffix = s; break; }
+      }
+      const iParts = extractParts(items[i], prefix);
+      const jParts = extractParts(items[mergeTarget], prefix);
+      const allParts = [...new Set([...iParts, ...jParts])];
+      allParts.sort((a, b) => a.length - b.length);
+      if (allParts.length >= 2) {
+        const newLabel = `${prefix}${allParts.join("、")}等${suffix}`;
+        result.push(newLabel);
+        explicitListingMap.set(newLabel, combineSuffix(prefix, suffix));
+      } else {
+        result.push(items[i]);
+      }
+      used.add(mergeTarget);
+    } else {
+      result.push(items[i]);
+    }
   }
   return result;
 }
@@ -461,8 +550,8 @@ function classifyWork(item) {
   if (label.includes("相关功能开发及相关问题处理")) {
     const prefix = label.split("相关功能开发及相关问题处理")[0];
     if (/工作量|评估/.test(prefix)) return "售前";
-    if (/问题|处理|排查|报错|失败|驳回/.test(prefix)) return "问题处理";
     if (/运维|生产|环境|部署|发版|巡检/.test(prefix)) return "运维";
+    if (/问题|处理|排查|报错|失败|驳回/.test(prefix)) return "问题处理";
     if (/文档|说明/.test(prefix)) return "文档";
     if (/功能|开发/.test(prefix)) return "功能开发";
     if (/需求|熟悉|会议|沟通/.test(prefix)) return "需求沟通";
@@ -472,8 +561,8 @@ function classifyWork(item) {
   if (label.includes("相关问题处理")) {
     const prefix = label.split("相关问题处理")[0].replace(/及$/, "");
     if (/工作量|评估/.test(prefix)) return "售前";
-    if (/问题|处理|排查|报错|失败|驳回/.test(prefix)) return "问题处理";
     if (/运维|生产|环境|部署|发版|巡检/.test(prefix)) return "运维";
+    if (/问题|处理|排查|报错|失败|驳回/.test(prefix)) return "问题处理";
     if (/文档|说明/.test(prefix)) return "文档";
     if (/功能|开发/.test(prefix)) return "功能开发";
     if (/需求|熟悉|会议|沟通/.test(prefix)) return "需求沟通";
@@ -483,8 +572,8 @@ function classifyWork(item) {
   if (label.includes("相关功能开发")) {
     const prefix = label.split("相关功能开发")[0];
     if (/工作量|评估/.test(prefix)) return "售前";
-    if (/问题|处理|排查|报错|失败|驳回/.test(prefix)) return "问题处理";
     if (/运维|生产|环境|部署|发版|巡检/.test(prefix)) return "运维";
+    if (/问题|处理|排查|报错|失败|驳回/.test(prefix)) return "问题处理";
     if (/文档|说明/.test(prefix)) return "文档";
     if (/功能|开发/.test(prefix)) return "功能开发";
     if (/需求|熟悉|会议|沟通/.test(prefix)) return "需求沟通";
@@ -494,8 +583,8 @@ function classifyWork(item) {
   if (label.includes("相关功能")) {
     const prefix = label.split("相关功能")[0];
     if (/工作量|评估/.test(prefix)) return "售前";
-    if (/问题|处理|排查|报错|失败|驳回/.test(prefix)) return "问题处理";
     if (/运维|生产|环境|部署|发版|巡检/.test(prefix)) return "运维";
+    if (/问题|处理|排查|报错|失败|驳回/.test(prefix)) return "问题处理";
     if (/文档|说明/.test(prefix)) return "文档";
     if (/功能|开发/.test(prefix)) return "功能开发";
     if (/需求|熟悉|会议|沟通/.test(prefix)) return "需求沟通";
@@ -505,8 +594,8 @@ function classifyWork(item) {
   if (label.includes("相关工作")) {
     const prefix = label.split("相关工作")[0];
     if (/工作量|评估/.test(prefix)) return "售前";
-    if (/问题|处理|排查|报错|失败|驳回/.test(prefix)) return "问题处理";
     if (/运维|生产|环境|部署|发版|巡检/.test(prefix)) return "运维";
+    if (/问题|处理|排查|报错|失败|驳回/.test(prefix)) return "问题处理";
     if (/文档|说明/.test(prefix)) return "文档";
     if (/功能|开发/.test(prefix)) return "功能开发";
     if (/需求|熟悉|会议|沟通/.test(prefix)) return "需求沟通";
@@ -622,6 +711,7 @@ function buildPersonSummary() {
 
       // Smart merge pipeline
       let merged = mergeByPrefix(mainWork);
+      merged = mergePairedGroups(merged);
       merged = mergeByCategory(merged);
       merged = mergeSimilarItems(merged);
       let grouped = groupThemes(merged);
@@ -984,6 +1074,7 @@ function buildProjectSummary() {
 
     // Smart merge pipeline
     let items = mergeByPrefix(processedItems);
+    items = mergePairedGroups(items);
     items = mergeByCategory(items);
     items = mergeSimilarItems(items);
     items = groupThemes(items);
