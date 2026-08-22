@@ -279,6 +279,11 @@ function determineSuffix(items) {
 
 // Combine prefix with suffix, adding "相关" only when suffix doesn't already start with "相关"
 // This prevents doubling like "XX相关相关问题处理"
+// Strip percentage indicators like "（50%）" or "(50%)" from text
+function stripPercentage(text) {
+  return text.replace(/[（(]\s*\d+%\s*[）)]/g, "");
+}
+
 function combineSuffix(prefix, suffix) {
   if (suffix.startsWith("相关")) {
     return prefix + suffix;
@@ -667,6 +672,9 @@ function buildPersonSummary() {
         }
       }
 
+      // Last day of date range - only keep percentages from the last day's reports
+      const lastDayStr = `${endMo}月${endDy}日`;
+
       // Step 1: Extract meaningful work from progress notes (with colon removal and day tracking)
       let mainWork = [];
       const seen = new Set();
@@ -676,6 +684,9 @@ function buildPersonSummary() {
         for (const line of lines) {
           let cleaned = line.trim().replace(/^\d+[、.．]\s*/, "");
           cleaned = removeColons(cleaned);
+          if (date !== lastDayStr) {
+            cleaned = stripPercentage(cleaned);
+          }
           if (isProgressMeaningful(cleaned) && cleaned.length < 50) {
             if (!seen.has(cleaned)) {
               seen.add(cleaned);
