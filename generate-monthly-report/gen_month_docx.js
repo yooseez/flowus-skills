@@ -1190,7 +1190,7 @@ const doc = new Document({
           alignment: AlignmentType.CENTER,
           spacing: { before: 400, after: 0 },
           children: [
-            new TextRun({ text: "本报告根据每天提交的日报，自动总结后生成", font: FONT, size: 20, color: "999999", italics: true }),
+            new TextRun({ text: "本报告由每日日报自动总结生成", font: FONT, size: 20, color: "999999", italics: true }),
           ],
         }),
         new Paragraph({ children: [new PageBreak()] }),
