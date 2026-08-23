@@ -129,7 +129,7 @@ function heading(text, level = HeadingLevel.HEADING_2) {
   return new Paragraph({
     heading: level,
     alignment: AlignmentType.LEFT,
-    spacing: { before: 200, after: 100 },
+    spacing: { before: 480, after: 200 },
     children: [
       new TextRun({
         text: text,
@@ -1186,6 +1186,13 @@ const doc = new Document({
             makeRow([cell("涉及项目数", { width: 2000 }), cell(`${projectCount} 个`, { width: 4000 })]),
           ],
         }),
+        new Paragraph({
+          alignment: AlignmentType.CENTER,
+          spacing: { before: 400, after: 0 },
+          children: [
+            new TextRun({ text: "本报告根据每天提交的日报，自动总结后生成", font: FONT, size: 20, color: "999999", italics: true }),
+          ],
+        }),
         new Paragraph({ children: [new PageBreak()] }),
       ],
     },
@@ -1298,8 +1305,27 @@ const doc = new Document({
           });
         })(),
 
-        // Section 4: Work summary by person
-        heading("四、人员月度工作总结"),
+        // Section 4: Work summary by project
+        heading("四、项目月度工作总结"),
+        ...projectSummaries.flatMap(({ name, hours, peopleCount, people, items }) => {
+          const paras = [
+            new Paragraph({
+              spacing: { before: 80, after: 20 },
+              children: [new TextRun({ text: `${name}  ${hours}工时（合计${pdStr(hours)}人天），${peopleCount}人参与（${people}）`, font: FONT, size: 22, bold: true })],
+            }),
+          ];
+          for (const item of items) {
+            paras.push(new Paragraph({
+              spacing: { before: 20, after: 20 },
+              indent: { left: 480 },
+              children: [new TextRun({ text: item, font: FONT, size: 21 })],
+            }));
+          }
+          return paras;
+        }),
+
+        // Section 5: Work summary by person
+        heading("五、人员月度工作总结"),
         ...workSummaries.flatMap(({ person, totalHours, days, projects }) => {
           const paras = [
             new Paragraph({
@@ -1320,25 +1346,6 @@ const doc = new Document({
                 children: [new TextRun({ text: item, font: FONT, size: 21 })],
               }));
             }
-          }
-          return paras;
-        }),
-
-        // Section 5: Work summary by project
-        heading("五、项目月度工作总结"),
-        ...projectSummaries.flatMap(({ name, hours, peopleCount, people, items }) => {
-          const paras = [
-            new Paragraph({
-              spacing: { before: 80, after: 20 },
-              children: [new TextRun({ text: `${name}  ${hours}工时（合计${pdStr(hours)}人天），${peopleCount}人参与（${people}）`, font: FONT, size: 22, bold: true })],
-            }),
-          ];
-          for (const item of items) {
-            paras.push(new Paragraph({
-              spacing: { before: 20, after: 20 },
-              indent: { left: 480 },
-              children: [new TextRun({ text: item, font: FONT, size: 21 })],
-            }));
           }
           return paras;
         }),
