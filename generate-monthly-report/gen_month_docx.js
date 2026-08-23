@@ -95,7 +95,11 @@ const cleanName = n => n.replace(/〓/g, "").replace(/〓/g, "");
 // Extract person name from "岗位 姓名" format (e.g. "后端 马少平" -> "马少平")
 const cleanPerson = p => p.includes(" ") ? p.split(" ").slice(1).join(" ") : p;
 
-const sortedProjects = Object.keys(projHours).sort();
+const sortedProjects = Object.keys(projHours).sort((a, b) => {
+  if (a.includes("非HD")) return 1;
+  if (b.includes("非HD")) return -1;
+  return projHours[b] - projHours[a];
+});
 const sortedPersons = Object.keys(personHours).sort();
 
 // ============ Helper Functions ============
