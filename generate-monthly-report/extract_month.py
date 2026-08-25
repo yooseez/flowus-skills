@@ -1,7 +1,11 @@
 """
 月报数据提取脚本（参数化）
-用法: python extract_month.py <YYYY-MM> [output_file]
-示例: python extract_month.py 2026-07
+用法:
+  python extract_month.py <YYYY-MM> [output_file]
+  python extract_month.py <YYYY-MM-DD> <YYYY-MM-DD> [output_file]
+示例:
+  python extract_month.py 2026-07
+  python extract_month.py 2026-07-15 2026-08-15
 """
 import json, subprocess, sys, os, calendar
 from collections import defaultdict
@@ -54,16 +58,33 @@ def api_call(method, path, body=None):
 if __name__ == "__main__":
     if len(sys.argv) < 2:
         print("用法: python extract_month.py <YYYY-MM> [output_file]")
+        print("      python extract_month.py <YYYY-MM-DD> <YYYY-MM-DD> [output_file]")
         sys.exit(1)
 
-    month_str = sys.argv[1]  # e.g. "2026-07"
-    yr_str, mo_str = month_str.split("-")
-    yr, mo = int(yr_str), int(mo_str)
-    last_day = calendar.monthrange(yr, mo)[1]
+    args = sys.argv[1:]
+    is_range_mode = (
+        len(args) >= 2
+        and len(args[0].split("-")) == 3
+        and len(args[1].split("-")) == 3
+    )
 
-    start_date = f"{yr}/{mo_str}/01"
-    end_date = f"{yr}/{mo_str}/{last_day:02d}"
-    output_file = sys.argv[2] if len(sys.argv) > 2 else os.path.join(SCRIPT_DIR, "month_data.json")
+    if is_range_mode:
+        # 自定义日期范围模式: <YYYY-MM-DD> <YYYY-MM-DD> [output_file]
+        sy, sm, sd = args[0].split("-")
+        ey, em, ed = args[1].split("-")
+        start_date = f"{sy}/{sm}/{sd}"
+        end_date = f"{ey}/{em}/{ed}"
+        output_file = args[2] if len(args) > 2 else os.path.join(SCRIPT_DIR, "month_data.json")
+        print(f"Date range mode: {start_date} to {end_date}")
+    else:
+        month_str = args[0]  # e.g. "2026-07"
+        yr_str, mo_str = month_str.split("-")
+        yr, mo = int(yr_str), int(mo_str)
+        last_day = calendar.monthrange(yr, mo)[1]
+
+        start_date = f"{yr}/{mo_str}/01"
+        end_date = f"{yr}/{mo_str}/{last_day:02d}"
+        output_file = args[1] if len(args) > 1 else os.path.join(SCRIPT_DIR, "month_data.json")
 
     # Paginated query
     all_results = []
