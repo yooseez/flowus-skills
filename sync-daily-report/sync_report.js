@@ -255,7 +255,7 @@ function analyze(targetDate) {
     for (const row of rows) {
       if (row.status !== 'pending') continue;
       const t = row.templates[0];
-      if (t.currentHours != null) continue;   // 理论上不会发生（needConfirm 已保证）
+      if (t.currentHours > 0) continue;   // 理论上不会发生（needConfirm 已保证）
       console.log(`  [自动写入] ${row.person} / ${row.project} / ${t.taskTitle} ← ${row.reportHours}h`);
       const r = writeHours(t.tplId, row.reportHours);
       row.autoResult = r.ok ? 'ok' : 'fail';
