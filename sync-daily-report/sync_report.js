@@ -88,6 +88,57 @@ function shiftDate(dateStr, days) {
   return d.toISOString().split('T')[0];
 }
 
+// 解析日期表达式，返回 YYYY-MM-DD（北京时间）
+// 支持：空/昨天/前天/今天/上周一~周日/X月X日/YYYY-MM-DD
+function parseDateExpr(expr) {
+  const now = new Date(Date.now() + 8 * 3600 * 1000); // 北京时间
+  const today = now.toISOString().split('T')[0];
+
+  if (!expr || expr.trim() === '') return shiftDate(today, -1); // 默认昨天
+
+  const s = expr.trim().toLowerCase();
+
+  // 今天/昨天/前天
+  if (s === '今天') return today;
+  if (s === '昨天') return shiftDate(today, -1);
+  if (s === '前天') return shiftDate(today, -2);
+
+  // 上周一~上周日
+  const weekMatch = s.match(/^上周([一二三四五六日天])$/);
+  if (weekMatch) {
+    const dayMap = { '一': 1, '二': 2, '三': 3, '四': 4, '五': 5, '六': 6, '日': 0, '天': 0 };
+    const targetDow = dayMap[weekMatch[1]];
+    const todayDow = now.getUTCDay(); // 0=周日
+    // 上一周的对应星期几
+    let diff = targetDow - todayDow;
+    if (diff >= 0) diff -= 7;
+    diff -= 7; // 再往前推一周（上上周的话就不对了，这里是"上周"）
+    // 重新计算：本周周一 = today - (todayDow-1)，上周一 = 本周周一 - 7
+    const thisMonday = shiftDate(today, -(todayDow === 0 ? 6 : todayDow - 1));
+    const lastMonday = shiftDate(thisMonday, -7);
+    const offset = targetDow === 0 ? 6 : targetDow - 1;
+    return shiftDate(lastMonday, offset);
+  }
+
+  // X月X日 / X月X
+  const mdMatch = s.match(/^(\d{1,2})月(\d{1,2})日?$/);
+  if (mdMatch) {
+    const year = now.getUTCFullYear();
+    const m = mdMatch[1].padStart(2, '0');
+    const d = mdMatch[2].padStart(2, '0');
+    let dateStr = `${year}-${m}-${d}`;
+    // 如果算出的日期晚于今天，则取上一年
+    if (dateStr > today) dateStr = `${year - 1}-${m}-${d}`;
+    return dateStr;
+  }
+
+  // YYYY-MM-DD
+  if (/^\d{4}-\d{2}-\d{2}$/.test(s)) return s;
+
+  // 默认：昨天
+  return shiftDate(today, -1);
+}
+
 function writeHours(pageId, hours) {
   return callAPI('PATCH', `/v2/pages/${pageId}`, {
     properties: { '实际投入（小时）': { type: 'number', number: hours } }
@@ -276,6 +327,10 @@ function analyze(targetDate) {
     hasExistingData, autoWritten, autoFail
   };
 
+  // 简洁结果行（供 LLM 快速读取）
+  const mode = needConfirm ? 'confirm' : 'auto';
+  console.log(`\n[RESULT] mode=${mode} targetDate=${targetDate} autoWritten=${autoWritten} autoFail=${autoFail} pending=${summary.pending} pending_over=${summary.pending_over} diff=${summary.diff} multi=${summary.multi} report_only=${summary.report_only} underEight=${summary.underEightPersons.length}`);
+
   console.log('\n===== 汇总 =====');
   console.log(`模式: ${needConfirm ? 'confirm（模版有已有数据或存在问题，等待人工确认）' : 'auto（模版全空且无问题，已自动写入）'}`);
   console.log(`待写入: ${summary.pending}  待覆盖: ${summary.pending_over}  有差异: ${summary.diff}  多条模版: ${summary.multi}`);
@@ -324,13 +379,12 @@ function doWrite(statePath, itemsPath) {
 }
 
 // ===== main =====
-const mode = process.argv[2];
-if (mode === 'write') {
+const arg1 = process.argv[2];
+if (arg1 === 'write') {
   doWrite(process.argv[3], process.argv[4]);
 } else {
-  analyze(mode || (() => {
-    // 默认：昨天（北京时间）
-    const beijing = new Date(Date.now() + 8 * 3600 * 1000 - 24 * 3600 * 1000);
-    return beijing.toISOString().split('T')[0];
-  })());
+  // arg1 可以是日期表达式（"昨天"、"上周五"、"8月21日"等）或 YYYY-MM-DD
+  const targetDate = parseDateExpr(arg1 || '');
+  console.log(`日期表达式: ${arg1 || '(默认昨天)'} → ${targetDate}`);
+  analyze(targetDate);
 }
