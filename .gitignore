@@ -1,6 +1,5 @@
 node_modules/
-__pycache__/
-*.pyc
+package-lock.json
 *_data.json
 q_*.json
 *.log
