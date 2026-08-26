@@ -2,6 +2,7 @@
 周报数据提取脚本（参数化）
 用法: python extract_week.py <start_date> <end_date> [output_file]
 示例: python extract_week.py 2026/08/03 2026/08/07
+      python extract_week.py 2026-08-03 2026-08-07
 """
 import json, subprocess, sys, os
 from collections import defaultdict
@@ -56,8 +57,12 @@ if __name__ == "__main__":
         print("用法: python extract_week.py <start_date YYYY/MM/DD> <end_date YYYY/MM/DD> [output_file]")
         sys.exit(1)
 
-    start_date = sys.argv[1]
-    end_date = sys.argv[2]
+    # 兼容连字符格式（2026-08-03）与斜杠格式（2026/08/03），API 要求斜杠格式
+    def to_slash(d):
+        return d.replace("-", "/")
+
+    start_date = to_slash(sys.argv[1])
+    end_date = to_slash(sys.argv[2])
     output_file = sys.argv[3] if len(sys.argv) > 3 else os.path.join(SCRIPT_DIR, "week_data.json")
 
     # Paginated query
@@ -68,8 +73,10 @@ if __name__ == "__main__":
             "page_size": 100,
             "sorts": [{"property": "日期", "direction": "ascending"}],
             "filter": {
-                "property": "日期",
-                "date": {"on_or_after": start_date, "on_or_before": end_date}
+                "and": [
+                    {"property": "日期", "date": {"on_or_after": start_date}},
+                    {"property": "日期", "date": {"on_or_before": end_date}}
+                ]
             }
         }
         if cursor:
