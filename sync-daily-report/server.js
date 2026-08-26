@@ -106,7 +106,10 @@ function analyze() {
 
   // 1. 日报（用"日期"字段）
   const rptRecords = queryDB(REPORT_DB, {
-    filter: { property: "日期", date: { on_or_after: shiftDate(TARGET_DATE, -2).replace(/-/g, '/'), on_or_before: shiftDate(TARGET_DATE, 1).replace(/-/g, '/') } },
+    filter: { and: [
+      { property: "日期", date: { on_or_after: shiftDate(TARGET_DATE, -2).replace(/-/g, '/') } },
+      { property: "日期", date: { on_or_before: shiftDate(TARGET_DATE, 1).replace(/-/g, '/') } }
+    ] },
     sorts: [{ property: "日期", direction: "ascending" }],
     page_size: 100
   });
