@@ -67,7 +67,6 @@ if (QUERY_BODY_FILE) {
 function getAutoDate(r) {
   const fillDate = r.properties['填报日期']?.date?.start;
   if (fillDate) return fillDate.includes('T') ? fillDate.split('T')[0].replace(/\//g, '-') : fillDate.replace(/\//g, '-');
-  // created_time 为 UTC，需转为北京时间(+8)后再取日期，否则凌晨创建的记录会算到前一天
   const beijing = new Date(new Date(r.created_time).getTime() + 8 * 3600 * 1000);
   return beijing.toISOString().split('T')[0];
 }
