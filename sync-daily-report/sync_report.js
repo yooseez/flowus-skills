@@ -152,7 +152,10 @@ function analyze(targetDate) {
   // 1. 日报（用"日期"字段）
   console.log('1. 查询日报...');
   const rptRecords = queryDB(REPORT_DB, {
-    filter: { property: "日期", date: { on_or_after: shiftDate(targetDate, -2).replace(/-/g, '/'), on_or_before: shiftDate(targetDate, 1).replace(/-/g, '/') } },
+    filter: { and: [
+      { property: "日期", date: { on_or_after: shiftDate(targetDate, -2).replace(/-/g, '/') } },
+      { property: "日期", date: { on_or_before: shiftDate(targetDate, 1).replace(/-/g, '/') } }
+    ] },
     sorts: [{ property: "日期", direction: "ascending" }],
     page_size: 100
   });
