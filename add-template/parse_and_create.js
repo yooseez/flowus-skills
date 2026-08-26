@@ -71,11 +71,63 @@ function getAutoDate(r) {
   return beijing.toISOString().split('T')[0];
 }
 
+// 删除已有记录并清理双向关联
+function deleteRecordsWithReverse(pageIds) {
+  let delOk = 0, delFail = 0, revOk = 0, revFail = 0;
+  const taskPageMap = {}; // taskId -> [pageId]
+
+  // 获取每条记录对应的 task ID
+  for (const pageId of pageIds) {
+    const pageRes = callAPI('GET', `/v2/pages/${pageId}`, {});
+    if (pageRes.ok) {
+      const taskId = pageRes.data.properties['任务名称']?.relation?.[0]?.id;
+      if (taskId) {
+        if (!taskPageMap[taskId]) taskPageMap[taskId] = [];
+        taskPageMap[taskId].push(pageId);
+      }
+    }
+  }
+
+  // 清理反向关联：从原任务的 同步任务名称 中移除待删除记录的 ID
+  for (const [taskId, idsToRemove] of Object.entries(taskPageMap)) {
+    const taskRes = callAPI('GET', `/v2/pages/${taskId}`, {});
+    if (!taskRes.ok) { revFail += idsToRemove.length; continue; }
+    const syncRel = taskRes.data.properties['同步任务名称']?.relation || [];
+    const currentIds = syncRel.map(r => r.id);
+    const filteredIds = currentIds.filter(id => !idsToRemove.includes(id));
+    if (filteredIds.length === currentIds.length) { continue; } // 无需更新
+    const newRelations = filteredIds.map(id => ({ id }));
+    const updateRes = callAPI('PATCH', `/v2/pages/${taskId}`, {
+      properties: { '同步任务名称': { type: 'relation', relation: newRelations } }
+    });
+    if (updateRes.ok) revOk += idsToRemove.length;
+    else revFail += idsToRemove.length;
+  }
+
+  // 删除记录（移到回收站）
+  for (const pageId of pageIds) {
+    const delRes = callAPI('PATCH', `/v2/pages/${pageId}`, { in_trash: true });
+    if (delRes.ok) delOk++;
+    else delFail++;
+  }
+
+  return { delOk, delFail, revOk, revFail };
+}
+
 if (!SKIP_CHECK) {
   const hasTargetData = records.some(r => getAutoDate(r) === TARGET_DATE);
   if (hasTargetData) {
     console.log('HAS_DATA');
     process.exit(0);
+  }
+} else {
+  // 用户确认继续：先删除目标日期已有记录并清理双向关联
+  const existingRecords = records.filter(r => getAutoDate(r) === TARGET_DATE);
+  if (existingRecords.length > 0) {
+    console.log(`DELETING: ${existingRecords.length} existing records`);
+    const { delOk, delFail, revOk, revFail } = deleteRecordsWithReverse(existingRecords.map(r => r.id));
+    console.log(`DELETED: ${delOk} ok, ${delFail} fail`);
+    console.log(`REVERSE_CLEANED: ${revOk} ok, ${revFail} fail`);
   }
 }
 
