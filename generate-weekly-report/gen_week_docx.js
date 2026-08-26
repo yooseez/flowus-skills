@@ -10,9 +10,9 @@ const {
 // Usage: node gen_week_docx.js <start_YYYY-MM-DD> <end_YYYY-MM-DD> [input.json]
 // Example: node gen_week_docx.js 2026-08-03 2026-08-07 week_data.json
 const args = process.argv.slice(2);
-const rangeStart = args[0] || "2026-07-01";
-const rangeEnd = args[1] || "2026-07-31";
-const inputFile = args[2] || "c:\\Users\\HONOR\\.trae-cn\\work\\6a5dc6c8f3dd409051bb8edc\\combined_data.json";
+const rangeStart = args[0] || "2026-08-03";
+const rangeEnd = args[1] || "2026-08-07";
+const inputFile = args[2] || "c:\\Users\\HONOR\\.trae-cn\\work\\6a5dc6c8f3dd409051bb8edc\\week_data.json";
 const [startYr, startMo, startDy] = rangeStart.split("-").map(Number);
 const [endYr, endMo, endDy] = rangeEnd.split("-").map(Number);
 
@@ -78,7 +78,7 @@ const projectCount = Object.keys(projHours).length;
 const personCount = Object.keys(personHours).length;
 const personDaysTotal = Object.values(personDays).reduce((a, s) => a + s.size, 0);
 
-// Calculate date range (actual data coverage within the target month)
+// Calculate date range (actual data coverage within the target week)
 const dateStrings = data.map(r => r.date_raw.split("T")[0].replace(/\//g, "-")).sort();
 const startDateStr = dateStrings[0];
 const endDateStr = dateStrings[dateStrings.length - 1];
@@ -86,8 +86,8 @@ const formatDate = (s) => {
   const [y, m, d] = s.split("-");
   return `${y}年${parseInt(m)}月${parseInt(d)}日`;
 };
-// Month label for cover title
-const monthLabel = `${startMo}月${startDy}日-${endMo}月${endDy}日`;
+// Week label for cover title (kept for parity with monthly report)
+const weekLabel = `${startMo}月${startDy}日-${endMo}月${endDy}日`;
 
 // Clean project name (remove 〓)
 const cleanName = n => n.replace(/〓/g, "").replace(/〓/g, "");
@@ -218,7 +218,7 @@ function mergeSimilarItems(items) {
   const merged = [];
   for (const item of sorted) {
     const label = getItemLabel(item);
-    const isGroup = label.includes("相关") || label === "运维及其他工作";
+    const isGroup = label.includes("相关工作") || label.includes("相关问题处理") || label === "运维及其他工作";
     const isSimilar = merged.some(m => {
       const mLabel = getItemLabel(m);
       if (mLabel.includes(label) || label.includes(mLabel)) return true;
@@ -228,7 +228,7 @@ function mergeSimilarItems(items) {
         else break;
       }
       if (commonLen >= 5) return true;
-      if (isGroup || mLabel.includes("相关") || mLabel === "运维及其他工作") return false;
+      if (isGroup || mLabel.includes("相关工作") || mLabel.includes("相关问题处理") || mLabel === "运维及其他工作") return false;
       if (item.length >= 4 && m.length >= 4 && charJaccard(item, m) >= 0.7) return true;
       return false;
     });
@@ -268,6 +268,8 @@ function removeColons(text) {
   return text.replace(/(.{1,4})：/g, "$1").replace(/：/g, "，");
 }
 
+// Group thematically related items: when 3+ items share a common prefix (>=2 chars),
+// merge ALL into one summary. If more than 5 items, list the 5 shortest.
 // Determine suffix based on task nature
 // Returns: 功能开发 / 相关问题处理 / 功能开发及相关问题处理 / 功能
 function determineSuffix(items) {
@@ -281,13 +283,13 @@ function determineSuffix(items) {
   return "功能";
 }
 
-// Combine prefix with suffix, adding "相关" only when suffix doesn't already start with "相关"
-// This prevents doubling like "XX相关相关问题处理"
 // Strip percentage indicators like "（50%）" or "(50%)" from text
 function stripPercentage(text) {
   return text.replace(/[（(]\s*\d+%\s*[）)]/g, "");
 }
 
+// Combine prefix with suffix, adding "相关" only when suffix doesn't already start with "相关"
+// This prevents doubling like "XX相关相关问题处理"
 function combineSuffix(prefix, suffix) {
   if (suffix.startsWith("相关")) {
     return prefix + suffix;
@@ -296,7 +298,7 @@ function combineSuffix(prefix, suffix) {
 }
 
 // Strip common action suffixes from an item to get the differentiating part
-// If stripping results in empty string, return original to preserve info
+// Returns empty string if result is a common action word (caller should check)
 function stripActionSuffix(item) {
   const stripped = item
     .replace(/(模块)?(功能)?开发$/, "")
@@ -457,6 +459,8 @@ function mergeByPrefix(items) {
 }
 
 // Merge pairs of already-grouped items sharing 2+ char common prefix
+// e.g. "法治工作部署、要点、考核等功能开发" + "法治专项工作相关功能开发：包括..." 
+//   → "法治工作部署、专项工作、要点、考核等功能开发"
 function mergePairedGroups(items) {
   const used = new Set();
   const result = [];
@@ -871,6 +875,8 @@ function mergeRelatedGroupsForSuffix(items, suffix, excludeSuffixes = []) {
   return [...others, ...result];
 }
 
+// Merge sub-categories into broader catch-all categories
+// e.g., "运维及其他工作" absorbs "运维相关问题处理" since the former already covers all 运维 work
 function mergeSubCategories(items) {
   const broadCategories = [
     { label: "运维及其他工作", category: "运维" },
@@ -1122,6 +1128,25 @@ function buildProjectSummary() {
 const workSummaries = buildPersonSummary();
 const projectSummaries = buildProjectSummary();
 
+// Debug: dump summaries when DUMP_SUMMARY env var is set
+if (process.env.DUMP_SUMMARY) {
+  console.log("\n===== 人员工作总结 =====");
+  for (const ps of workSummaries) {
+    console.log(`\n${ps.person}  ${ps.totalHours}工时（合计${Math.round(ps.totalHours / 8 * 10) / 10}人天），总共填报${ps.days}次`);
+    for (const pd of ps.projects) {
+      console.log(`  [${pd.name}] ${pd.hours}工时（${pd.days}天）`);
+      pd.items.forEach(item => console.log(`    ${item}`));
+    }
+  }
+  console.log("\n===== 项目工作总结 =====");
+  for (const ps of projectSummaries) {
+    const peopleStr = Array.isArray(ps.people) ? ps.people.join("、") : (ps.peopleCount || "");
+    console.log(`\n${ps.name}  ${ps.hours}工时（合计${Math.round(ps.hours / 8 * 10) / 10}人天），${ps.peopleCount}人参与（${peopleStr}）`);
+    ps.items.forEach(item => console.log(`  ${item}`));
+  }
+  process.exit(0);
+}
+
 const doc = new Document({
   styles: {
     default: {
@@ -1284,8 +1309,8 @@ const doc = new Document({
           });
         })(),
 
-        // Section 4: Work summary by project
-        heading("四、项目本周工作总结"),
+        // Section 4: Work summary by project (project first, person second - same as monthly report)
+        heading("四、项目周度工作总结"),
         ...projectSummaries.flatMap(({ name, hours, peopleCount, people, items }) => {
           const paras = [
             new Paragraph({
@@ -1304,7 +1329,7 @@ const doc = new Document({
         }),
 
         // Section 5: Work summary by person
-        heading("五、人员本周工作总结"),
+        heading("五、人员周度工作总结"),
         ...workSummaries.flatMap(({ person, totalHours, days, projects }) => {
           const paras = [
             new Paragraph({
