@@ -94,8 +94,10 @@ if __name__ == "__main__":
             "page_size": 100,
             "sorts": [{"property": "日期", "direction": "ascending"}],
             "filter": {
-                "property": "日期",
-                "date": {"on_or_after": start_date, "on_or_before": end_date}
+                "and": [
+                    {"property": "日期", "date": {"on_or_after": start_date}},
+                    {"property": "日期", "date": {"on_or_before": end_date}}
+                ]
             }
         }
         if cursor:
