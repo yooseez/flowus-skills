@@ -126,7 +126,10 @@ function analyze() {
       const proj = getProp(r.properties, `项目-${i}`, 'select');
       const taskName = getProp(r.properties, `任务名称-${i}`, 'rich_text');
       const hrs = getProp(r.properties, `任务工时-${i}`, 'number');
-      if (proj) reportData.push({ person, project: proj, projectNorm: normProject(proj), taskName, hours: hrs });
+      if (proj || hrs > 0) {
+        const project = proj || '';
+        reportData.push({ person, project, projectNorm: proj ? normProject(proj) : '', taskName, hours: hrs });
+      }
     }
     const opsTask = getProp(r.properties, '运维工作', 'select');
     const opsHrs = getProp(r.properties, '运维工时', 'number');
@@ -397,9 +400,9 @@ function render() {
   cards.push(card('待覆盖', s.pending_over, 'green', 'pending_over'));
   cards.push(card('有差异', s.diff, 'red', 'diff'));
   if (s.underEightPersons.length) {
-    cards.push('<div class="card' + (curFilter === 'under8' ? ' active' : '') + '" onclick="toggleFilter(\\'under8\\')"><div class="names">' + s.underEightPersons.map(esc).join('、') + '</div><div class="lbl">不是8小时</div></div>');
+    cards.push('<div class="card' + (curFilter === 'under8' ? ' active' : '') + '" onclick="toggleFilter(\\'under8\\')"><div class="names">' + s.underEightPersons.map(esc).join('、') + '</div><div class="lbl">不足8小时</div></div>');
   } else {
-    cards.push(card('不是8小时', '无', 'gray noclick', null));
+    cards.push(card('不足8小时', '无', 'gray noclick', null));
   }
   cards.push(card('仅日报', s.report_only, 'red', 'report_only'));
   cards.push(card('仅模版', s.unmatched, 'gray', 'unmatched'));

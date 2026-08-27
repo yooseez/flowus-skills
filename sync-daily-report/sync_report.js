@@ -172,11 +172,17 @@ function analyze(targetDate) {
       const proj = getProp(r.properties, `项目-${i}`, 'select');
       const taskName = getProp(r.properties, `任务名称-${i}`, 'rich_text');
       const hrs = getProp(r.properties, `任务工时-${i}`, 'number');
-      if (proj) reportData.push({ person, project: proj, projectNorm: normProject(proj), taskName, hours: hrs });
+      if (proj || hrs > 0) {
+        const project = proj || '';
+        reportData.push({ person, project, projectNorm: proj ? normProject(proj) : '', taskName, hours: hrs });
+        console.log(`  [日报条目] ${person} | 项目:${proj || '(空)'} | 工时:${hrs} | 任务:${taskName || '(空)'}`);
+      }
     }
     const opsTask = getProp(r.properties, '运维工作', 'select');
     const opsHrs = getProp(r.properties, '运维工时', 'number');
-    if (opsTask) reportData.push({ person, project: '运维', projectNorm: '运维', taskName: opsTask, hours: opsHrs });
+    if (opsTask) { reportData.push({ person, project: '运维', projectNorm: '运维', taskName: opsTask, hours: opsHrs });
+      console.log(`  [日报条目] ${person} | 项目:运维 | 工时:${opsHrs} | 任务:${opsTask}`);
+    }
   }
   console.log(`  日报条目: ${reportData.length} 条`);
 
