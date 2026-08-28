@@ -1223,7 +1223,7 @@ const doc = new Document({
               headerCell("人员", { width: 2000 }),
               headerCell("投入工时（人天）", { width: 2000 }),
               headerCell("填报天数", { width: 1500 }),
-              headerCell("参与项目", { width: 3500 }),
+              headerCell("参与项目（占比）", { width: 3500 }),
             ]),
             ...sortedPersons.map(person => {
               const projects = Array.from(personProjects[person]).sort();
@@ -1231,7 +1231,11 @@ const doc = new Document({
                 cell(person, { width: 2000 }),
                 cell(`${personHours[person]}（${pdStr(personHours[person])}）`, { width: 2000 }),
                 cell(`${personDays[person].size}`, { width: 1500 }),
-                cell(projects.map(n => cleanName(n)).join("、"), { width: 3500, alignment: AlignmentType.LEFT }),
+                cell(projects.map(n => {
+                  const hrs = personProjHours[person]?.[n] || 0;
+                  const pct = Math.round(hrs / (uniqueDays * 8) * 100);
+                  return `${cleanName(n)}（${pct}%）`;
+                }).join("、"), { width: 3500, alignment: AlignmentType.LEFT }),
               ]);
             }),
             makeRow([
@@ -1253,7 +1257,7 @@ const doc = new Document({
               headerCell("项目", { width: 2500 }),
               headerCell("投入工时（人天）", { width: 2000 }),
               headerCell("参与人数", { width: 1500 }),
-              headerCell("参与人员", { width: 3000 }),
+              headerCell("参与人员（人天）", { width: 3000 }),
             ]),
             ...sortedProjects.map(proj => {
               const people = Array.from(projPeople[proj]).sort();
@@ -1261,7 +1265,10 @@ const doc = new Document({
                 cell(cleanName(proj), { width: 2500, alignment: AlignmentType.LEFT }),
                 cell(`${projHours[proj]}（${pdStr(projHours[proj])}）`, { width: 2000 }),
                 cell(`${projPeople[proj].size}`, { width: 1500 }),
-                cell(people.map(p => cleanPerson(p)).join("、"), { width: 3000, alignment: AlignmentType.LEFT }),
+                cell(people.map(p => {
+                  const hrs = personProjHours[p]?.[proj] || 0;
+                  return `${cleanPerson(p)}（${pdStr(hrs)}）`;
+                }).join("、"), { width: 3000, alignment: AlignmentType.LEFT }),
               ]);
             }),
             makeRow([
@@ -1275,38 +1282,96 @@ const doc = new Document({
 
         // Section 3: Person-Project matrix - use PERCENTAGE width to avoid compression
         heading("三、人员×项目投入矩阵（工时）"),
-        (() => {
-          const namePct = 14;       // 14% for person name column (wider to fit "后端 马少平" without wrapping)
-          const totalPct = 8;       // 8% for total column
-          const projPct = Math.floor((100 - namePct - totalPct) / sortedProjects.length); // remaining split equally
-          return new Table({
-            alignment: AlignmentType.CENTER,
-            width: { size: 100, type: WidthType.PERCENTAGE },
-            rows: [
-              makeRow([
-                headerCell("人员", { widthPct: namePct }),
-                ...sortedProjects.map(proj => headerCell(cleanName(proj), { widthPct: projPct })),
-                headerCell("合计", { widthPct: totalPct }),
-              ]),
-              ...sortedPersons.map(person => {
-                const rowCells = [cell(person, { widthPct: namePct })];
-                let rowTotal = 0;
-                for (const proj of sortedProjects) {
-                  const hrs = personProjHours[person]?.[proj] || 0;
-                  rowTotal += hrs;
-                  rowCells.push(cell(hrs > 0 ? `${hrs}` : "-", { widthPct: projPct }));
-                }
-                rowCells.push(cell(`${rowTotal}`, { widthPct: totalPct, bold: true }));
-                return makeRow(rowCells);
-              }),
-              // Total row
-              makeRow([
-                cell("合计", { widthPct: namePct, bold: true, shading: "F0F0F0" }),
-                ...sortedProjects.map(proj => cell(`${projHours[proj]}`, { widthPct: projPct, bold: true, shading: "F0F0F0" })),
-                cell(`${totalHours}`, { widthPct: totalPct, bold: true, shading: "F0F0F0" }),
-              ]),
-            ],
-          });
+        ...(() => {
+          const namePct = 14;
+          const totalPct = 8;
+          const MAX_PROJ_PER_TABLE = 10;
+
+          if (sortedProjects.length <= MAX_PROJ_PER_TABLE) {
+            const projPct = Math.floor((100 - namePct - totalPct) / sortedProjects.length);
+            return [new Table({
+              alignment: AlignmentType.CENTER,
+              width: { size: 100, type: WidthType.PERCENTAGE },
+              rows: [
+                makeRow([
+                  headerCell("人员", { widthPct: namePct }),
+                  ...sortedProjects.map(proj => headerCell(cleanName(proj), { widthPct: projPct })),
+                  headerCell("合计", { widthPct: totalPct }),
+                ]),
+                ...sortedPersons.map(person => {
+                  const rowCells = [cell(person, { widthPct: namePct })];
+                  let rowTotal = 0;
+                  for (const proj of sortedProjects) {
+                    const hrs = personProjHours[person]?.[proj] || 0;
+                    rowTotal += hrs;
+                    rowCells.push(cell(hrs > 0 ? `${hrs}` : "-", { widthPct: projPct }));
+                  }
+                  rowCells.push(cell(`${rowTotal}`, { widthPct: totalPct, bold: true }));
+                  return makeRow(rowCells);
+                }),
+                makeRow([
+                  cell("合计", { widthPct: namePct, bold: true, shading: "F0F0F0" }),
+                  ...sortedProjects.map(proj => cell(`${projHours[proj]}`, { widthPct: projPct, bold: true, shading: "F0F0F0" })),
+                  cell(`${totalHours}`, { widthPct: totalPct, bold: true, shading: "F0F0F0" }),
+                ]),
+              ],
+            })];
+          }
+
+          const chunks = [];
+          for (let i = 0; i < sortedProjects.length; i += MAX_PROJ_PER_TABLE) {
+            chunks.push(sortedProjects.slice(i, i + MAX_PROJ_PER_TABLE));
+          }
+
+          const elements = [];
+          for (let ci = 0; ci < chunks.length; ci++) {
+            const chunk = chunks[ci];
+            const isLast = ci === chunks.length - 1;
+            const projPct = Math.floor((100 - namePct - totalPct) / chunk.length);
+            const colLabel = "小计";
+
+            elements.push(new Paragraph({
+              spacing: { before: 60, after: 20 },
+              children: [new TextRun({
+                text: `（${ci + 1}）项目${ci * MAX_PROJ_PER_TABLE + 1}-${ci * MAX_PROJ_PER_TABLE + chunk.length}`,
+                font: FONT, size: 22, color: "0066CC", bold: true,
+              })],
+            }));
+
+            elements.push(new Table({
+              alignment: AlignmentType.CENTER,
+              width: { size: 100, type: WidthType.PERCENTAGE },
+              rows: [
+                makeRow([
+                  headerCell("人员", { widthPct: namePct }),
+                  ...chunk.map(proj => headerCell(cleanName(proj), { widthPct: projPct })),
+                  headerCell(colLabel, { widthPct: totalPct }),
+                ]),
+                ...sortedPersons.map(person => {
+                  const rowCells = [cell(person, { widthPct: namePct })];
+                  let rowTotal = 0;
+                  for (const proj of chunk) {
+                    const hrs = personProjHours[person]?.[proj] || 0;
+                    rowTotal += hrs;
+                    rowCells.push(cell(hrs > 0 ? `${hrs}` : "-", { widthPct: projPct }));
+                  }
+                  rowCells.push(cell(`${rowTotal}`, { widthPct: totalPct, bold: true }));
+                  return makeRow(rowCells);
+                }),
+                makeRow([
+                  cell("合计", { widthPct: namePct, bold: true, shading: "F0F0F0" }),
+                  ...chunk.map(proj => cell(`${projHours[proj]}`, { widthPct: projPct, bold: true, shading: "F0F0F0" })),
+                  cell(`${chunk.reduce((sum, proj) => sum + (projHours[proj] || 0), 0)}`, { widthPct: totalPct, bold: true, shading: "F0F0F0" }),
+                ]),
+              ],
+            }));
+
+            if (!isLast) {
+              elements.push(new Paragraph({ spacing: { before: 40, after: 40 }, children: [] }));
+            }
+          }
+
+          return elements;
         })(),
 
         // Section 4: Work summary by project (project first, person second - same as monthly report)
