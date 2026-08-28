@@ -1213,7 +1213,7 @@ const matrixElements = (() => {
           ...chunk.map(proj => headerCell(cleanName(proj), { widthPct: projPct })),
           headerCell(colLabel, { widthPct: totalPct }),
         ]),
-        ...sortedPersons.map(person => {
+        ...sortedPersons.filter(person => chunk.some(proj => (personProjHours[person]?.[proj] || 0) > 0)).map(person => {
           const rowCells = [cell(person, { widthPct: namePct })];
           let rowTotal = 0;
           for (const proj of chunk) {
@@ -1347,8 +1347,41 @@ const doc = new Document({
         },
       },
       children: [
-        // Section 1: Person overview
-        heading("一、人员投入统计"),
+        // Section 1: Project overview
+        heading("一、项目投入统计"),
+        new Table({
+          alignment: AlignmentType.CENTER,
+          width: { size: 9000, type: WidthType.DXA },
+          rows: [
+            makeRow([
+              headerCell("项目", { width: 2500 }),
+              headerCell("投入工时（人天）", { width: 2000 }),
+              headerCell("参与人数", { width: 1500 }),
+              headerCell("参与人员（人天）", { width: 3000 }),
+            ]),
+            ...sortedProjects.map(proj => {
+              const people = Array.from(projPeople[proj]).sort();
+              return makeRow([
+                cell(cleanName(proj), { width: 2500, alignment: AlignmentType.LEFT }),
+                cell(`${projHours[proj]}（${pdStr(projHours[proj])}）`, { width: 2000 }),
+                cell(`${projPeople[proj].size}`, { width: 1500 }),
+                cell(people.map(p => {
+                  const hrs = personProjHours[p]?.[proj] || 0;
+                  return `${cleanPerson(p)}（${pdStr(hrs)}）`;
+                }).join("、"), { width: 3000, alignment: AlignmentType.LEFT }),
+              ]);
+            }),
+            makeRow([
+              cell("合计", { width: 2500, bold: true, shading: "F0F0F0" }),
+              cell(`${totalHours}（${pdStr(totalHours)}）`, { width: 2000, bold: true, shading: "F0F0F0" }),
+              cell("-", { width: 1500, shading: "F0F0F0" }),
+              cell("-", { width: 3000, shading: "F0F0F0" }),
+            ]),
+          ],
+        }),
+
+        // Section 2: Person overview
+        heading("二、人员投入统计"),
         new Table({
           alignment: AlignmentType.CENTER,
           width: { size: 9000, type: WidthType.DXA },
@@ -1377,39 +1410,6 @@ const doc = new Document({
               cell(`${totalHours}（${pdStr(totalHours)}）`, { width: 2000, bold: true, shading: "F0F0F0" }),
               cell("-", { width: 1500, shading: "F0F0F0" }),
               cell("-", { width: 3500, shading: "F0F0F0" }),
-            ]),
-          ],
-        }),
-
-        // Section 2: Project overview
-        heading("二、项目投入统计"),
-        new Table({
-          alignment: AlignmentType.CENTER,
-          width: { size: 9000, type: WidthType.DXA },
-          rows: [
-            makeRow([
-              headerCell("项目", { width: 2500 }),
-              headerCell("投入工时（人天）", { width: 2000 }),
-              headerCell("参与人数", { width: 1500 }),
-              headerCell("参与人员（人天）", { width: 3000 }),
-            ]),
-            ...sortedProjects.map(proj => {
-              const people = Array.from(projPeople[proj]).sort();
-              return makeRow([
-                cell(cleanName(proj), { width: 2500, alignment: AlignmentType.LEFT }),
-                cell(`${projHours[proj]}（${pdStr(projHours[proj])}）`, { width: 2000 }),
-                cell(`${projPeople[proj].size}`, { width: 1500 }),
-                cell(people.map(p => {
-                  const hrs = personProjHours[p]?.[proj] || 0;
-                  return `${cleanPerson(p)}（${pdStr(hrs)}）`;
-                }).join("、"), { width: 3000, alignment: AlignmentType.LEFT }),
-              ]);
-            }),
-            makeRow([
-              cell("合计", { width: 2500, bold: true, shading: "F0F0F0" }),
-              cell(`${totalHours}（${pdStr(totalHours)}）`, { width: 2000, bold: true, shading: "F0F0F0" }),
-              cell("-", { width: 1500, shading: "F0F0F0" }),
-              cell("-", { width: 3000, shading: "F0F0F0" }),
             ]),
           ],
         }),
