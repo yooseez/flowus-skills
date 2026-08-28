@@ -1147,6 +1147,140 @@ if (process.env.DUMP_SUMMARY) {
   process.exit(0);
 }
 
+const MAX_PROJ_PER_TABLE = 10;
+const matrixNeedsSplit = sortedProjects.length > MAX_PROJ_PER_TABLE;
+const matrixElements = (() => {
+  const namePct = 14;
+  const totalPct = 8;
+
+  if (sortedProjects.length <= MAX_PROJ_PER_TABLE) {
+    const projPct = Math.floor((100 - namePct - totalPct) / sortedProjects.length);
+    return [new Table({
+      alignment: AlignmentType.CENTER,
+      width: { size: 100, type: WidthType.PERCENTAGE },
+      rows: [
+        makeRow([
+          headerCell("人员", { widthPct: namePct }),
+          ...sortedProjects.map(proj => headerCell(cleanName(proj), { widthPct: projPct })),
+          headerCell("合计", { widthPct: totalPct }),
+        ]),
+        ...sortedPersons.map(person => {
+          const rowCells = [cell(person, { widthPct: namePct })];
+          let rowTotal = 0;
+          for (const proj of sortedProjects) {
+            const hrs = personProjHours[person]?.[proj] || 0;
+            rowTotal += hrs;
+            rowCells.push(cell(hrs > 0 ? `${hrs}` : "-", { widthPct: projPct }));
+          }
+          rowCells.push(cell(`${rowTotal}`, { widthPct: totalPct, bold: true }));
+          return makeRow(rowCells);
+        }),
+        makeRow([
+          cell("合计", { widthPct: namePct, bold: true, shading: "F0F0F0" }),
+          ...sortedProjects.map(proj => cell(`${projHours[proj]}`, { widthPct: projPct, bold: true, shading: "F0F0F0" })),
+          cell(`${totalHours}`, { widthPct: totalPct, bold: true, shading: "F0F0F0" }),
+        ]),
+      ],
+    })];
+  }
+
+  const chunks = [];
+  for (let i = 0; i < sortedProjects.length; i += MAX_PROJ_PER_TABLE) {
+    chunks.push(sortedProjects.slice(i, i + MAX_PROJ_PER_TABLE));
+  }
+
+  const elements = [];
+  for (let ci = 0; ci < chunks.length; ci++) {
+    const chunk = chunks[ci];
+    const isLast = ci === chunks.length - 1;
+    const projPct = Math.floor((100 - namePct - totalPct) / chunk.length);
+    const colLabel = "小计";
+
+    elements.push(new Paragraph({
+      spacing: { before: 60, after: 20 },
+      children: [new TextRun({
+        text: `（${ci + 1}）项目${ci * MAX_PROJ_PER_TABLE + 1}-${ci * MAX_PROJ_PER_TABLE + chunk.length}`,
+        font: FONT, size: 22, color: "0066CC", bold: true,
+      })],
+    }));
+
+    elements.push(new Table({
+      alignment: AlignmentType.CENTER,
+      width: { size: 100, type: WidthType.PERCENTAGE },
+      rows: [
+        makeRow([
+          headerCell("人员", { widthPct: namePct }),
+          ...chunk.map(proj => headerCell(cleanName(proj), { widthPct: projPct })),
+          headerCell(colLabel, { widthPct: totalPct }),
+        ]),
+        ...sortedPersons.map(person => {
+          const rowCells = [cell(person, { widthPct: namePct })];
+          let rowTotal = 0;
+          for (const proj of chunk) {
+            const hrs = personProjHours[person]?.[proj] || 0;
+            rowTotal += hrs;
+            rowCells.push(cell(hrs > 0 ? `${hrs}` : "-", { widthPct: projPct }));
+          }
+          rowCells.push(cell(`${rowTotal}`, { widthPct: totalPct, bold: true }));
+          return makeRow(rowCells);
+        }),
+        makeRow([
+          cell("合计", { widthPct: namePct, bold: true, shading: "F0F0F0" }),
+          ...chunk.map(proj => cell(`${projHours[proj]}`, { widthPct: projPct, bold: true, shading: "F0F0F0" })),
+          cell(`${chunk.reduce((sum, proj) => sum + (projHours[proj] || 0), 0)}`, { widthPct: totalPct, bold: true, shading: "F0F0F0" }),
+        ]),
+      ],
+    }));
+
+    if (!isLast) {
+      elements.push(new Paragraph({ spacing: { before: 40, after: 40 }, children: [] }));
+    }
+  }
+
+  return elements;
+})();
+
+const projectSummaryElements = projectSummaries.flatMap(({ name, hours, peopleCount, people, items }) => {
+  const paras = [
+    new Paragraph({
+      spacing: { before: 80, after: 20 },
+      children: [new TextRun({ text: `${name}  ${hours}工时（合计${pdStr(hours)}人天），${peopleCount}人参与（${people}）`, font: FONT, size: 22, bold: true })],
+    }),
+  ];
+  for (const item of items) {
+    paras.push(new Paragraph({
+      spacing: { before: 20, after: 20 },
+      indent: { left: 480 },
+      children: [new TextRun({ text: item, font: FONT, size: 21 })],
+    }));
+  }
+  return paras;
+});
+
+const personSummaryElements = workSummaries.flatMap(({ person, totalHours, days, projects }) => {
+  const paras = [
+    new Paragraph({
+      spacing: { before: 80, after: 20 },
+      children: [new TextRun({ text: `${person}  ${totalHours}工时（合计${pdStr(totalHours)}人天），总共填报${days}次`, font: FONT, size: 22, color: "0066CC", bold: true })],
+    }),
+  ];
+  for (const { name, hours, days: pdays, items } of projects) {
+    paras.push(new Paragraph({
+      spacing: { before: 40, after: 20 },
+      indent: { left: 120 },
+      children: [new TextRun({ text: `${name}  ${hours}工时（合计${pdStr(hours)}人天），填报${pdays}次`, font: FONT, size: 21, bold: true })],
+    }));
+    for (const item of items) {
+      paras.push(new Paragraph({
+        spacing: { before: 20, after: 20 },
+        indent: { left: 480 },
+        children: [new TextRun({ text: item, font: FONT, size: 21 })],
+      }));
+    }
+  }
+  return paras;
+});
+
 const doc = new Document({
   styles: {
     default: {
@@ -1280,146 +1414,22 @@ const doc = new Document({
           ],
         }),
 
-        // Section 3: Person-Project matrix - use PERCENTAGE width to avoid compression
-        heading("三、人员×项目投入矩阵（工时）"),
-        ...(() => {
-          const namePct = 14;
-          const totalPct = 8;
-          const MAX_PROJ_PER_TABLE = 10;
-
-          if (sortedProjects.length <= MAX_PROJ_PER_TABLE) {
-            const projPct = Math.floor((100 - namePct - totalPct) / sortedProjects.length);
-            return [new Table({
-              alignment: AlignmentType.CENTER,
-              width: { size: 100, type: WidthType.PERCENTAGE },
-              rows: [
-                makeRow([
-                  headerCell("人员", { widthPct: namePct }),
-                  ...sortedProjects.map(proj => headerCell(cleanName(proj), { widthPct: projPct })),
-                  headerCell("合计", { widthPct: totalPct }),
-                ]),
-                ...sortedPersons.map(person => {
-                  const rowCells = [cell(person, { widthPct: namePct })];
-                  let rowTotal = 0;
-                  for (const proj of sortedProjects) {
-                    const hrs = personProjHours[person]?.[proj] || 0;
-                    rowTotal += hrs;
-                    rowCells.push(cell(hrs > 0 ? `${hrs}` : "-", { widthPct: projPct }));
-                  }
-                  rowCells.push(cell(`${rowTotal}`, { widthPct: totalPct, bold: true }));
-                  return makeRow(rowCells);
-                }),
-                makeRow([
-                  cell("合计", { widthPct: namePct, bold: true, shading: "F0F0F0" }),
-                  ...sortedProjects.map(proj => cell(`${projHours[proj]}`, { widthPct: projPct, bold: true, shading: "F0F0F0" })),
-                  cell(`${totalHours}`, { widthPct: totalPct, bold: true, shading: "F0F0F0" }),
-                ]),
-              ],
-            })];
-          }
-
-          // Split into chunks when projects exceed threshold
-          const chunks = [];
-          for (let i = 0; i < sortedProjects.length; i += MAX_PROJ_PER_TABLE) {
-            chunks.push(sortedProjects.slice(i, i + MAX_PROJ_PER_TABLE));
-          }
-
-          const elements = [];
-          for (let ci = 0; ci < chunks.length; ci++) {
-            const chunk = chunks[ci];
-            const isLast = ci === chunks.length - 1;
-            const projPct = Math.floor((100 - namePct - totalPct) / chunk.length);
-            const colLabel = "小计";
-
-            // Chunk label paragraph
-            elements.push(new Paragraph({
-              spacing: { before: 60, after: 20 },
-              children: [new TextRun({
-                text: `（${ci + 1}）项目${ci * MAX_PROJ_PER_TABLE + 1}-${ci * MAX_PROJ_PER_TABLE + chunk.length}`,
-                font: FONT, size: 22, color: "0066CC", bold: true,
-              })],
-            }));
-
-            elements.push(new Table({
-              alignment: AlignmentType.CENTER,
-              width: { size: 100, type: WidthType.PERCENTAGE },
-              rows: [
-                makeRow([
-                  headerCell("人员", { widthPct: namePct }),
-                  ...chunk.map(proj => headerCell(cleanName(proj), { widthPct: projPct })),
-                  headerCell(colLabel, { widthPct: totalPct }),
-                ]),
-                ...sortedPersons.map(person => {
-                  const rowCells = [cell(person, { widthPct: namePct })];
-                  let rowTotal = 0;
-                  for (const proj of chunk) {
-                    const hrs = personProjHours[person]?.[proj] || 0;
-                    rowTotal += hrs;
-                    rowCells.push(cell(hrs > 0 ? `${hrs}` : "-", { widthPct: projPct }));
-                  }
-                  rowCells.push(cell(`${rowTotal}`, { widthPct: totalPct, bold: true }));
-                  return makeRow(rowCells);
-                }),
-                makeRow([
-                  cell("合计", { widthPct: namePct, bold: true, shading: "F0F0F0" }),
-                  ...chunk.map(proj => cell(`${projHours[proj]}`, { widthPct: projPct, bold: true, shading: "F0F0F0" })),
-                  cell(`${chunk.reduce((sum, proj) => sum + (projHours[proj] || 0), 0)}`, { widthPct: totalPct, bold: true, shading: "F0F0F0" }),
-                ]),
-              ],
-            }));
-
-            if (!isLast) {
-              elements.push(new Paragraph({ spacing: { before: 40, after: 40 }, children: [] }));
-            }
-          }
-
-          return elements;
-        })(),
-
-        // Section 4: Work summary by project
-        heading("四、项目月度工作总结"),
-        ...projectSummaries.flatMap(({ name, hours, peopleCount, people, items }) => {
-          const paras = [
-            new Paragraph({
-              spacing: { before: 80, after: 20 },
-              children: [new TextRun({ text: `${name}  ${hours}工时（合计${pdStr(hours)}人天），${peopleCount}人参与（${people}）`, font: FONT, size: 22, bold: true })],
-            }),
-          ];
-          for (const item of items) {
-            paras.push(new Paragraph({
-              spacing: { before: 20, after: 20 },
-              indent: { left: 480 },
-              children: [new TextRun({ text: item, font: FONT, size: 21 })],
-            }));
-          }
-          return paras;
-        }),
-
-        // Section 5: Work summary by person
-        heading("五、人员月度工作总结"),
-        ...workSummaries.flatMap(({ person, totalHours, days, projects }) => {
-          const paras = [
-            new Paragraph({
-              spacing: { before: 80, after: 20 },
-              children: [new TextRun({ text: `${person}  ${totalHours}工时（合计${pdStr(totalHours)}人天），总共填报${days}次`, font: FONT, size: 22, color: "0066CC", bold: true })],
-            }),
-          ];
-          for (const { name, hours, days: pdays, items } of projects) {
-            paras.push(new Paragraph({
-              spacing: { before: 40, after: 20 },
-              indent: { left: 120 },
-              children: [new TextRun({ text: `${name}  ${hours}工时（合计${pdStr(hours)}人天），填报${pdays}次`, font: FONT, size: 21, bold: true })],
-            }));
-            for (const item of items) {
-              paras.push(new Paragraph({
-                spacing: { before: 20, after: 20 },
-                indent: { left: 480 },
-                children: [new TextRun({ text: item, font: FONT, size: 21 })],
-              }));
-            }
-          }
-          return paras;
-        }),
+        // Sections 3-5: conditional ordering based on matrix split
+        ...(matrixNeedsSplit ? [
+          heading("三、项目月度工作总结"),
+          ...projectSummaryElements,
+          heading("四、人员月度工作总结"),
+          ...personSummaryElements,
+          heading("五、人员×项目投入矩阵（工时）"),
+          ...matrixElements,
+        ] : [
+          heading("三、人员×项目投入矩阵（工时）"),
+          ...matrixElements,
+          heading("四、项目月度工作总结"),
+          ...projectSummaryElements,
+          heading("五、人员月度工作总结"),
+          ...personSummaryElements,
+        ]),
       ],
     },
   ],
