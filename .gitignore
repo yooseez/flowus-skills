@@ -7,7 +7,7 @@ q_*.json
 # Mock / test files
 gen_mock_data.js
 
-# Sync daily report state files
+# Sync daily report state files (regenerated on each run, do not commit)
 fill_state_*.json
 
 # TRAE platform internal files
