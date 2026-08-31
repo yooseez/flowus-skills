@@ -94,7 +94,14 @@ function parseDateExpr(expr) {
   const now = new Date(Date.now() + 8 * 3600 * 1000); // 北京时间
   const today = now.toISOString().split('T')[0];
 
-  if (!expr || expr.trim() === '') return shiftDate(today, -1); // 默认昨天
+  if (!expr || expr.trim() === '') {
+    // 默认昨天；若昨天是周末，回溯到上周五
+    const yesterday = shiftDate(today, -1);
+    const yDow = new Date(yesterday + 'T00:00:00Z').getUTCDay();
+    if (yDow === 0) return shiftDate(today, -3); // 昨天周日 → 上周五
+    if (yDow === 6) return shiftDate(today, -2); // 昨天周六 → 上周五
+    return yesterday;
+  }
 
   const s = expr.trim().toLowerCase();
 
