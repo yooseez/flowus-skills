@@ -975,6 +975,21 @@ function simplifySummary(items, keepDetails = false) {
     }
     simplified = others;
   }
+  // Absorb any item containing "运维" keyword into "运维及其他工作"
+  const opsItems = simplified.filter(item => {
+    const label = getItemLabel(item);
+    return label !== "运维及其他工作" && label.includes("运维");
+  });
+  if (opsItems.length > 0) {
+    const hasBroad = simplified.some(item => getItemLabel(item) === "运维及其他工作");
+    const others = simplified.filter(item => !opsItems.includes(item));
+    if (hasBroad || others.some(item => getItemLabel(item).includes("运维"))) {
+      simplified = others;
+    } else {
+      simplified = others;
+      simplified.push("运维及其他工作");
+    }
+  }
   // Merge related thematic groups
   simplified = mergeRelatedGroups(simplified);
   // Merge sub-categories into broader catch-all categories (e.g., 运维相关问题处理 → 运维及其他工作)
@@ -1387,28 +1402,29 @@ const doc = new Document({
           width: { size: 9000, type: WidthType.DXA },
           rows: [
             makeRow([
-              headerCell("项目", { width: 2500 }),
+              headerCell("人员", { width: 2000 }),
               headerCell("投入工时（人天）", { width: 2000 }),
-              headerCell("参与人数", { width: 1500 }),
-              headerCell("参与人员（人天）", { width: 3000 }),
+              headerCell("填报天数", { width: 1500 }),
+              headerCell("参与项目（占比）", { width: 3500 }),
             ]),
-            ...sortedProjects.map(proj => {
-              const people = Array.from(projPeople[proj]).sort();
+            ...sortedPersons.map(person => {
+              const projects = Array.from(personProjects[person]).sort();
               return makeRow([
-                cell(cleanName(proj), { width: 2500, alignment: AlignmentType.LEFT }),
-                cell(`${projHours[proj]}（${pdStr(projHours[proj])}）`, { width: 2000 }),
-                cell(`${projPeople[proj].size}`, { width: 1500 }),
-                cell(people.map(p => {
-                  const hrs = personProjHours[p]?.[proj] || 0;
-                  return `${cleanPerson(p)}（${pdStr(hrs)}）`;
-                }).join("、"), { width: 3000, alignment: AlignmentType.LEFT }),
+                cell(person, { width: 2000 }),
+                cell(`${personHours[person]}（${pdStr(personHours[person])}）`, { width: 2000 }),
+                cell(`${personDays[person].size}`, { width: 1500 }),
+                cell(projects.map(n => {
+                  const hrs = personProjHours[person]?.[n] || 0;
+                  const pct = Math.round(hrs / (uniqueDays * 8) * 100);
+                  return `${cleanName(n)}（${pct}%）`;
+                }).join("、"), { width: 3500, alignment: AlignmentType.LEFT }),
               ]);
             }),
             makeRow([
-              cell("合计", { width: 2500, bold: true, shading: "F0F0F0" }),
+              cell("合计", { width: 2000, bold: true, shading: "F0F0F0" }),
               cell(`${totalHours}（${pdStr(totalHours)}）`, { width: 2000, bold: true, shading: "F0F0F0" }),
               cell("-", { width: 1500, shading: "F0F0F0" }),
-              cell("-", { width: 3000, shading: "F0F0F0" }),
+              cell("-", { width: 3500, shading: "F0F0F0" }),
             ]),
           ],
         }),

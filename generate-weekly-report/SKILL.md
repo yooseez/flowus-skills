@@ -18,6 +18,8 @@ description: "从 FlowUs 日报数据生成项目周报 Word 文档。Invoke whe
 
 **无参数时（默认逻辑）：**
 - 判断今天是周几：如果今天是周五或更晚（weekday >= 4），则生成本周周报；否则生成上周周报
+- ⚠️ **必须用 Python datetime 计算周一日期，禁止手动猜测星期几**（详见1.2节）
+- 周报日期范围 = 周一到周五（5个工作日），不是周一到周日
 - 示例：今天是周三 → 生成上周周报；今天是周五 → 生成本周周报
 
 **有参数时：**
@@ -53,15 +55,17 @@ description: "从 FlowUs 日报数据生成项目周报 Word 文档。Invoke whe
 - 示例：今天是2026年8月15日（周六），today.weekday()=5
   - 本周：monday = 8/15 - 5天 = 8/10（周一），sunday = 8/16
   - 上周：monday = 8/15 - 12天 = 8/3（周一），sunday = 8/9
-- ⚠️ **必须用 datetime.weekday() 计算周一日期，不要靠猜**
+- ⚠️ **必须用 Python datetime 计算周一日期，禁止手动猜测星期几**
+- 提取数据传周一到周日（含周末确保不遗漏）
+- 生成文档传周一到周五（工作日）
 - 日期格式必须是 `YYYY/MM/DD`（斜杠，FlowUs API 要求）
 
 ### 2. 提取数据
 
-运行参数化提取脚本（位于本技能目录下）：
+运行参数化提取脚本（位于本技能目录下），**日期范围传周一到周日**：
 
 ```bash
-python "<技能目录>/extract_week.py" <start_date> <end_date> <output_path>
+python "<技能目录>/extract_week.py" <monday> <sunday> <output_path>
 ```
 
 - 日期格式支持连字符（`2026-08-03`）和斜杠（`2026/08/03`），脚本自动转换为 API 要求的斜杠格式
@@ -78,10 +82,10 @@ python "C:\Users\HONOR\.trae-cn\skills\generate-weekly-report\extract_week.py" 2
 
 ### 3. 生成 Word 文档
 
-确保 `docx` npm 包可用（首次使用时运行 `npm install docx`），然后执行：
+确保 `docx` npm 包可用（首次使用时运行 `npm install docx`），然后执行，**日期范围传周一到周五（工作日）**：
 
 ```bash
-node "<技能目录>/gen_week_docx.js" <start_YYYY-MM-DD> <end_YYYY-MM-DD> <data_file>
+node "<技能目录>/gen_week_docx.js" <monday_YYYY-MM-DD> <friday_YYYY-MM-DD> <data_file>
 ```
 
 示例：

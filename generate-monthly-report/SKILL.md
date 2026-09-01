@@ -80,16 +80,16 @@ python "C:\Users\HONOR\.trae-cn\skills\generate-monthly-report\extract_month.py"
 
 **按月份生成：**
 ```bash
-node "<技能目录>/gen_month_docx.js" <YYYY-MM> <data_file>
+node "<技能目录>/gen_month_docx.js" <start_YYYY-MM-DD> <end_YYYY-MM-DD> <data_file>
 ```
 示例：
 ```bash
-node "C:\Users\HONOR\.trae-cn\skills\generate-monthly-report\gen_month_docx.js" 2026-07 "C:\Users\HONOR\.trae-cn\skills\generate-monthly-report\month_data.json"
+node "C:\Users\HONOR\.trae-cn\skills\generate-monthly-report\gen_month_docx.js" 2026-07-01 2026-07-31 "C:\Users\HONOR\.trae-cn\skills\generate-monthly-report\month_data.json"
 ```
 
 **按自定义日期范围生成（跨月场景如"7月15日到8月15日"）：**
 ```bash
-node "<技能目录>/gen_month_docx.js" <YYYY-MM-DD> <YYYY-MM-DD> <data_file>
+node "<技能目录>/gen_month_docx.js" <start_YYYY-MM-DD> <end_YYYY-MM-DD> <data_file>
 ```
 示例：
 ```bash

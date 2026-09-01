@@ -975,6 +975,21 @@ function simplifySummary(items, keepDetails = false) {
     }
     simplified = others;
   }
+  // Absorb any item containing "运维" keyword into "运维及其他工作"
+  const opsItems = simplified.filter(item => {
+    const label = getItemLabel(item);
+    return label !== "运维及其他工作" && label.includes("运维");
+  });
+  if (opsItems.length > 0) {
+    const hasBroad = simplified.some(item => getItemLabel(item) === "运维及其他工作");
+    const others = simplified.filter(item => !opsItems.includes(item));
+    if (hasBroad || others.some(item => getItemLabel(item).includes("运维"))) {
+      simplified = others;
+    } else {
+      simplified = others;
+      simplified.push("运维及其他工作");
+    }
+  }
   // Merge related thematic groups
   simplified = mergeRelatedGroups(simplified);
   // Merge sub-categories into broader catch-all categories (e.g., 运维相关问题处理 → 运维及其他工作)
