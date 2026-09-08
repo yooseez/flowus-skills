@@ -75,7 +75,7 @@ description: "查询昨天Flowus多维表记录并批量创建新模版记录（
 
 ### 3. 用 Node.js 脚本执行（分页查询 + 解析 + 批量创建 + 反向关联）
 
-脚本路径：`.trae/skills/add-template/parse_and_create.js`
+脚本路径：`C:\Users\HONOR\Documents\flowus-skills\add-template\parse_and_create.js`（flowus-skills 技能仓库；旧路径 `.trae/skills/add-template/` 已废弃）
 
 脚本执行流程：
 1. **分页查询**：读取查询 body 文件，自动分页获取所有结果（`has_more=true` 时用 `next_cursor` 继续查询，直到获取全部数据），确保 HAS_DATA 检查不遗漏
