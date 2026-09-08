@@ -53,20 +53,20 @@ description: "从 FlowUs 日报数据生成项目月报 Word 文档。Invoke whe
 
 **按月份提取：**
 ```bash
-python "<技能目录>/extract_month.py" <YYYY-MM> <output_path>
+python "C:\Users\HONOR\Documents\flowus-skills\generate-monthly-report\extract_month.py" <YYYY-MM> <output_path>
 ```
 示例：
 ```bash
-python "C:\Users\HONOR\.trae-cn\skills\generate-monthly-report\extract_month.py" 2026-07 "C:\Users\HONOR\.trae-cn\skills\generate-monthly-report\month_data.json"
+python "C:\Users\HONOR\Documents\flowus-skills\generate-monthly-report\extract_month.py" 2026-07 "C:\Users\HONOR\AppData\Local\Temp\month_data.json"
 ```
 
 **按自定义日期范围提取（跨月场景如"7月15日到8月15日"）：**
 ```bash
-python "<技能目录>/extract_month.py" <YYYY-MM-DD> <YYYY-MM-DD> <output_path>
+python "C:\Users\HONOR\Documents\flowus-skills\generate-monthly-report\extract_month.py" <YYYY-MM-DD> <YYYY-MM-DD> <output_path>
 ```
 示例：
 ```bash
-python "C:\Users\HONOR\.trae-cn\skills\generate-monthly-report\extract_month.py" 2026-07-15 2026-08-15 "C:\Users\HONOR\.trae-cn\skills\generate-monthly-report\month_data.json"
+python "C:\Users\HONOR\Documents\flowus-skills\generate-monthly-report\extract_month.py" 2026-07-15 2026-08-15 "C:\Users\HONOR\AppData\Local\Temp\month_data.json"
 ```
 
 **⚠️ 人员完整性校验**：脚本运行后检查输出，如果出现 `WARNING: Found unmapped persons!`：
@@ -80,20 +80,20 @@ python "C:\Users\HONOR\.trae-cn\skills\generate-monthly-report\extract_month.py"
 
 **按月份生成：**
 ```bash
-node "<技能目录>/gen_month_docx.js" <start_YYYY-MM-DD> <end_YYYY-MM-DD> <data_file>
+node "C:\Users\HONOR\Documents\flowus-skills\generate-monthly-report\gen_month_docx.js" <start_YYYY-MM-DD> <end_YYYY-MM-DD> <data_file>
 ```
 示例：
 ```bash
-node "C:\Users\HONOR\.trae-cn\skills\generate-monthly-report\gen_month_docx.js" 2026-07-01 2026-07-31 "C:\Users\HONOR\.trae-cn\skills\generate-monthly-report\month_data.json"
+node "C:\Users\HONOR\Documents\flowus-skills\generate-monthly-report\gen_month_docx.js" 2026-07-01 2026-07-31 "C:\Users\HONOR\AppData\Local\Temp\month_data.json"
 ```
 
 **按自定义日期范围生成（跨月场景如"7月15日到8月15日"）：**
 ```bash
-node "<技能目录>/gen_month_docx.js" <start_YYYY-MM-DD> <end_YYYY-MM-DD> <data_file>
+node "C:\Users\HONOR\Documents\flowus-skills\generate-monthly-report\gen_month_docx.js" <start_YYYY-MM-DD> <end_YYYY-MM-DD> <data_file>
 ```
 示例：
 ```bash
-node "C:\Users\HONOR\.trae-cn\skills\generate-monthly-report\gen_month_docx.js" 2026-07-15 2026-08-15 "C:\Users\HONOR\.trae-cn\skills\generate-monthly-report\month_data.json"
+node "C:\Users\HONOR\Documents\flowus-skills\generate-monthly-report\gen_month_docx.js" 2026-07-15 2026-08-15 "C:\Users\HONOR\AppData\Local\Temp\month_data.json"
 ```
 
 - 生成脚本内置日期范围过滤，即使数据文件包含范围外的记录也只统计目标范围

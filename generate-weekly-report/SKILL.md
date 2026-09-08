@@ -65,14 +65,14 @@ description: "从 FlowUs 日报数据生成项目周报 Word 文档。Invoke whe
 运行参数化提取脚本（位于本技能目录下），**日期范围传周一到周日**：
 
 ```bash
-python "<技能目录>/extract_week.py" <monday> <sunday> <output_path>
+python "C:\Users\HONOR\Documents\flowus-skills\generate-weekly-report\extract_week.py" <monday> <sunday> <output_path>
 ```
 
 - 日期格式支持连字符（`2026-08-03`）和斜杠（`2026/08/03`），脚本自动转换为 API 要求的斜杠格式
 
 示例：
 ```bash
-python "C:\Users\HONOR\.trae-cn\skills\generate-weekly-report\extract_week.py" 2026-08-03 2026-08-07 "C:\Users\HONOR\.trae-cn\skills\generate-weekly-report\week_data.json"
+python "C:\Users\HONOR\Documents\flowus-skills\generate-weekly-report\extract_week.py" 2026-08-03 2026-08-07 "C:\Users\HONOR\AppData\Local\Temp\week_data.json"
 ```
 
 **⚠️ 人员完整性校验**：脚本运行后检查输出，如果出现 `WARNING: Found unmapped persons!`：
@@ -85,12 +85,12 @@ python "C:\Users\HONOR\.trae-cn\skills\generate-weekly-report\extract_week.py" 2
 确保 `docx` npm 包可用（首次使用时运行 `npm install docx`），然后执行，**日期范围传周一到周五（工作日）**：
 
 ```bash
-node "<技能目录>/gen_week_docx.js" <monday_YYYY-MM-DD> <friday_YYYY-MM-DD> <data_file>
+node "C:\Users\HONOR\Documents\flowus-skills\generate-weekly-report\gen_week_docx.js" <monday_YYYY-MM-DD> <friday_YYYY-MM-DD> <data_file>
 ```
 
 示例：
 ```bash
-node "C:\Users\HONOR\.trae-cn\skills\generate-weekly-report\gen_week_docx.js" 2026-08-03 2026-08-07 "C:\Users\HONOR\.trae-cn\skills\generate-weekly-report\week_data.json"
+node "C:\Users\HONOR\Documents\flowus-skills\generate-weekly-report\gen_week_docx.js" 2026-08-03 2026-08-07 "C:\Users\HONOR\AppData\Local\Temp\week_data.json"
 ```
 
 - 生成脚本内置完整日期范围过滤（按年月日比较），即使数据文件包含范围外的记录也只统计目标范围，跨月周（如8/27-9/2）也能正确过滤

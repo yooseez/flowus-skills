@@ -12,7 +12,7 @@ const {
 const args = process.argv.slice(2);
 const rangeStart = args[0] || "2026-08-03";
 const rangeEnd = args[1] || "2026-08-07";
-const inputFile = args[2] || "c:\\Users\\HONOR\\.trae-cn\\work\\6a5dc6c8f3dd409051bb8edc\\week_data.json";
+const inputFile = args[2] || "C:\\Users\\HONOR\\AppData\\Local\\Temp\\week_data.json";
 const [startYr, startMo, startDy] = rangeStart.split("-").map(Number);
 const [endYr, endMo, endDy] = rangeEnd.split("-").map(Number);
 
