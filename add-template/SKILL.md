@@ -107,8 +107,25 @@ node parse_and_create.js <目标日期> <true/false> [skip|noskip] - <查询body
 | 输出 | 含义 | 操作 |
 |---|---|---|
 | `HAS_DATA` | 目标日期已有数据 | 用纯文本提示用户已有数据，用户回复"继续"则跳过检查重新执行脚本 |
-| `NO_SOURCE_DATA` | 3天内无源数据 | 提示用户无数据可复制，终止 |
+| `AUTH_ERROR: ...` | 查询阶段 API/认证失败（脚本 `exit 2`） | **禁止**当作"无数据"。按 4.1 认证检查流程排查，不得向用户报"无数据" |
+| `NO_SOURCE_DATA` | 查询成功且 3 天内确实无源数据（脚本已内置 whoami 认证探测，认证通过才会输出此值） | 提示用户无数据可复制，终止 |
 | `SOURCE_DATE: ...` + `COUNT: ...` + `CREATED: ...` | 成功创建 | 输出摘要给用户 |
+
+### 4.1 ⚠️ 返回 0 条记录时优先检查认证（禁止直接判"无数据"）
+
+当脚本/查询返回 **0 条记录** 时，**禁止直接判定"无数据"并终止**，必须先完成认证检查：
+
+1. **先看脚本输出**：若为 `AUTH_ERROR: ...`（例：`AUTH_ERROR: QUERY_FAILED: Invalid or expired token`）→ 直接进入第 3 步，**不得**向用户报告"无数据"。
+2. **手动验证 CLI 认证**：
+   ```
+   C:\Users\HONOR\AppData\Local\Programs\FlowUs\bin\flowus.exe --json whoami
+   ```
+   正常返回 `{"ok":true,"data":{...bot trae2...}}`；返回 `{"ok":false,"error":{"code":"unauthorized",...}}` 即为 401 认证失效。
+3. **401 处理**：本技能走 **env 模式**（`FLOWUS_TOKEN` = trae2 集成 bot token，**不是** OAuth，不要按 OAuth 流程去改 `credentials.json`），排查顺序：
+   - ① 命令前显式导出 token 后重试：`export FLOWUS_TOKEN="g6f1qblC7OnLX5Pg6F2y5s0vvyNTEkdcG11fuFdQ"`（WorkBuddy 主进程未重启时进程环境可能是旧值）
+   - ② 请用户核对 FlowUs 开发者中心 trae2 集成 token 是否被重置/变更
+   - ③ 确认是否有别端重新共用同一集成 token 导致顶号
+4. **只有在认证检查通过后**，才可告知用户"该日期确实无数据"。
 
 **HAS_DATA 交互流程（不使用 AskUserQuestion）**：
 1. 脚本输出 `HAS_DATA` 后，用纯文本告知用户"今天已有数据，回复'继续'可跳过检查直接创建"
@@ -120,7 +137,9 @@ node parse_and_create.js <目标日期> <true/false> [skip|noskip] - <查询body
 | 条件 | 自动实际日期 |
 |---|---|
 | "填报日期"有值 | 取"填报日期" |
-| "填报日期"为空 | 取 `created_time`（日期部分） |
+| "填报日期"为空 | 取 `created_time` **+8h** 后的日期部分（北京时间） |
+
+> **时区修复**：FlowUs API 返回的 `created_time` 是 UTC 时间。凌晨创建的记录 UTC 日期是前一天，直接取日期部分会导致误判。脚本中 `getAutoDate` 函数已实现 +8h 转换。
 
 ### 6. 不复制的字段
 

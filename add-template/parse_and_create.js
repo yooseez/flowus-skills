@@ -40,10 +40,20 @@ function queryAllPages(queryBodyFile) {
     const result = spawnSync(CLI, ['--json', 'api', 'call', 'POST', `/v2/databases/${DB_ID}/query`, '--body', bodyPath], { encoding: 'utf8', timeout: 30000 });
     const output = result.stdout || '';
     const clean = output.replace(/^\uFEFF/, '').replace(/^#< CLIXML\s*/, '').split('\n<Objs')[0];
-    const parsed = JSON.parse(clean);
 
-    if (!parsed.ok || !parsed.data) break;
-    allResults = allResults.concat(parsed.data.results);
+    let parsed;
+    try {
+      parsed = JSON.parse(clean);
+    } catch (e) {
+      throw new Error(`QUERY_PARSE_FAILED: ${clean.slice(0, 300)}`);
+    }
+
+    // 不再静默 break：API/认证错误必须向上抛出，否则会被误判为“无数据”(NO_SOURCE_DATA)
+    if (!parsed.ok || !parsed.data) {
+      const detail = (parsed.error && (parsed.error.message || parsed.error.code)) || parsed.error || JSON.stringify(parsed).slice(0, 300);
+      throw new Error(`QUERY_FAILED: ${detail}`);
+    }
+    allResults = allResults.concat(parsed.data.results || []);
 
     if (!parsed.data.has_more) break;
     startCursor = parsed.data.next_cursor;
@@ -52,16 +62,36 @@ function queryAllPages(queryBodyFile) {
   return allResults;
 }
 
+// 认证探测：在判定“无数据”之前调用 whoami，排除认证失效导致的假空结果
+function checkAuth() {
+  const result = spawnSync(CLI, ['--json', 'whoami'], { encoding: 'utf8', timeout: 30000 });
+  const output = (result.stdout || '').replace(/^\uFEFF/, '').replace(/^#< CLIXML\s*/, '').split('\n<Objs')[0];
+  try {
+    const parsed = JSON.parse(output);
+    if (parsed && parsed.ok && parsed.data && parsed.data.id) return { ok: true };
+    const detail = (parsed && parsed.error && (parsed.error.message || parsed.error.code)) || output.slice(0, 200);
+    return { ok: false, error: detail };
+  } catch (e) {
+    return { ok: false, error: output.slice(0, 200) || e.message };
+  }
+}
+
 // 如果传入了第7个参数（查询 body 文件路径），则执行分页查询获取全部数据
 // 否则继续使用 RESULT_FILE（兼容旧调用方式）
 let records;
-if (QUERY_BODY_FILE) {
-  records = queryAllPages(QUERY_BODY_FILE);
-} else {
-  const raw = fs.readFileSync(RESULT_FILE, 'utf8');
-  const jsonStr = raw.replace(/^\uFEFF/, '').replace(/^#< CLIXML\s*/, '').split('\n<Objs')[0];
-  const data = JSON.parse(jsonStr);
-  records = data.data.results;
+try {
+  if (QUERY_BODY_FILE) {
+    records = queryAllPages(QUERY_BODY_FILE);
+  } else {
+    const raw = fs.readFileSync(RESULT_FILE, 'utf8');
+    const jsonStr = raw.replace(/^\uFEFF/, '').replace(/^#< CLIXML\s*/, '').split('\n<Objs')[0];
+    const data = JSON.parse(jsonStr);
+    records = data.data.results;
+  }
+} catch (e) {
+  // 查询失败（含 401 认证失效）绝不输出 NO_SOURCE_DATA
+  console.log(`AUTH_ERROR: ${e.message}`);
+  process.exit(2);
 }
 
 function getAutoDate(r) {
@@ -136,6 +166,12 @@ const beforeTarget = records
   .filter(r => r.autoDate < TARGET_DATE && r.taskId);
 
 if (beforeTarget.length === 0) {
+  // 查询成功但窗口内 0 条记录：先做认证探测，确认不是认证失效造成的假空结果
+  const auth = checkAuth();
+  if (!auth.ok) {
+    console.log(`AUTH_ERROR: whoami failed - ${auth.error}`);
+    process.exit(2);
+  }
   console.log('NO_SOURCE_DATA');
   process.exit(0);
 }
