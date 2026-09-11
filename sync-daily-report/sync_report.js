@@ -10,6 +10,12 @@ const { spawnSync } = require('child_process');
 const fs = require('fs');
 const path = require('path');
 
+// 凭证：固定使用 Windows 用户级环境变量 FLOWUS_TOKEN（静态密钥，bot trae2）。
+// 不使用 ~/.flowus/credentials.json 的 OAuth 凭证——网页授权会重新签发令牌并作废同族旧令牌，
+// 曾因此顶掉 TRAE 侧 MCP 令牌。此处不再对 FLOWUS_TOKEN 做任何删除/改写。
+// 实测：环境变量 token 优先级高于凭证文件（文件存在且含有效令牌时，doctor 仍报 tokenSource: env），
+// 故即使 credentials.json 再次出现，也不会影响本脚本使用的身份。
+
 const CLI = 'C:\\Users\\HONOR\\AppData\\Local\\Programs\\FlowUs\\bin\\flowus.exe';
 const REPORT_DB = '1a9c4392-b5ae-48f4-aa3b-e05135215dce';
 const TEMPLATE_DB = 'bc84d926-8df2-4662-9751-6a35e8761d14';
@@ -26,7 +32,62 @@ const USER_MAP = {
 const PROJECT_ALIAS = {
   '浙能法务': '浙能法务二期',
   '非HD项目': '其它项目',
+  '中国诚通': '其它项目',
+  '集团采购': '其它项目',
 };
+
+// "其它项目"下子项目路径映射：日报原始项目名 → 模版任务的【父记录】名称
+// 当同一人有多条项目都映射到"其它项目"时，用子项目名做二级匹配
+const OTHER_PROJECT_SUBPATH = {
+  '中国诚通': '中国诚通',
+  '集团采购': '公司/集团项目',
+};
+
+// ===== 认证 / API 错误判定 =====
+// 实测 CLI 失败时 stdout 仍是 JSON，同时 stderr 有一行纯文本：
+//   token 无效 : {"error":{"code":"unauthorized","message":"Invalid or expired token","status":401}}            退出码 2
+//   token 为空 : {"error":{"code":"unauthorized","message":"Authorization header format must be: Bearer <token>"}}
+//   token 缺失 : {"error":{"code":"local_error","message":"Missing FlowUs token. Pass --token or set FLOWUS_TOKEN."}} 退出码 1
+// ⚠️ 这些情况过去会让 queryDB 直接 break 并返回空数组，最终表现为"该日期无数据"——最迷惑的失败形态。
+function classifyFailure(parsed) {
+  const err = (parsed && parsed.error) || {};
+  const code = typeof err === 'string' ? '' : (err.code || '');
+  const message = ((typeof err === 'string' ? err : err.message) || (parsed && parsed.__cliStderr) || '(无错误信息)');
+  const status = (typeof err === 'object' && err.status) || 0;
+  const hay = `${code} ${message}`;
+  let kind = 'api';
+  if (/unauthor|token|bearer|expired|missing flowus token/i.test(hay) || status === 401) kind = 'token';
+  else if (/forbidden|permission/i.test(hay) || status === 403) kind = 'permission';
+  return { kind, code, message, status, cliStatus: parsed ? parsed.__cliStatus : null };
+}
+
+function reportQueryFailure(where, info) {
+  const line = '='.repeat(64);
+  const out = [''];
+  out.push(line);
+  out.push(`❌ 读取失败：${where}`);
+  out.push('   ⚠️ 这不是"该日期无数据"——API 调用本身出错了，已中止，未写入任何内容。');
+  out.push('-'.repeat(64));
+  out.push(`   类型    : ${info.kind === 'token' ? '认证 / TOKEN 问题' : info.kind === 'permission' ? '权限问题（缺数据库权限）' : '其他 API 错误'}`);
+  out.push(`   代码    : ${info.code || '(无)'}`);
+  out.push(`   HTTP    : ${info.status || '(无)'}   CLI 退出码: ${info.cliStatus === null || info.cliStatus === undefined ? '(无)' : info.cliStatus}`);
+  out.push(`   原始信息: ${info.message}`);
+  if (info.kind === 'token') {
+    out.push('-'.repeat(64));
+    out.push('   【TOKEN 排查步骤】');
+    out.push('   1) 确认用户级环境变量是否存在（PowerShell）：');
+    out.push("        [Environment]::GetEnvironmentVariable('FLOWUS_TOKEN','User')");
+    out.push('   2) 确认 CLI 认证状态：');
+    out.push(`        "${CLI}" doctor`);
+    out.push('        期望：authenticated=true / authMode=static / tokenSource=env / user.name=trae2');
+    out.push('   3) 第 1 步为空 → 变量丢失，重新设置；第 2 步 unauthorized → 密钥已失效，');
+    out.push('      到 FlowUs 开发者中心重新获取外部应用密钥并更新该用户级环境变量。');
+    out.push('   ⛔ 不要运行 flowus.exe login：网页授权会作废同族旧令牌（曾因此顶掉 TRAE 侧 MCP 令牌）。');
+  }
+  out.push(line);
+  out.push('');
+  console.error(out.join('\n'));
+}
 
 function callAPI(method, apiPath, body) {
   const args = ['--json', 'api', 'call', method, apiPath];
@@ -37,8 +98,16 @@ function callAPI(method, apiPath, body) {
   }
   const result = spawnSync(CLI, args, { encoding: 'utf8', timeout: 30000 });
   const output = result.stdout || '';
-  const clean = output.replace(/^\uFEFF/, '').replace(/^#< CLIXML\s*/, '').split('\n<Objs')[0];
-  try { return JSON.parse(clean); } catch(e) { return { ok: false, error: e.message }; }
+  const clean = output.replace(/^\uFEFF/, '').replace(/^#<\s*CLIXML\s*/, '').split('\n<Objs')[0];
+  let parsed = null, parseErr = null;
+  try { parsed = JSON.parse(clean); } catch (e) { parseErr = e; }
+  if (!parsed || typeof parsed !== 'object') {
+    // CLI 崩溃 / 无输出 / 输出被包裹 —— 保留原文与 stderr，交给 classifyFailure 判定
+    parsed = { ok: false, error: { code: 'unparsable_output', message: parseErr ? parseErr.message : '(CLI 无输出)' } };
+  }
+  parsed.__cliStatus = result.status;
+  parsed.__cliStderr = (result.stderr || '').trim();
+  return parsed;
 }
 
 function queryDB(dbId, filterBody) {
@@ -48,7 +117,14 @@ function queryDB(dbId, filterBody) {
     const pageBody = { ...filterBody };
     if (cursor) pageBody.start_cursor = cursor;
     const parsed = callAPI('POST', `/v2/databases/${dbId}/query`, pageBody);
-    if (!parsed.ok || !parsed.data) break;
+    if (!parsed.ok || !parsed.data) {
+      // 不再静默 break 返回空数组（那会伪装成"该日期无数据"），改为抛出，由调用方上报
+      const info = classifyFailure(parsed);
+      const err = new Error(info.message);
+      err.flowusFailure = info;
+      err.dbId = dbId;
+      throw err;
+    }
     allResults = allResults.concat(parsed.data.results);
     if (!parsed.data.has_more) break;
     cursor = parsed.data.next_cursor;
@@ -171,6 +247,7 @@ function analyze(targetDate) {
     return d.startsWith(targetDate.replace(/-/g, '/')) || d.startsWith(targetDate);
   });
   console.log(`  当日日报: ${dayReports.length} 条`);
+  if (dayReports.length === 0) console.log('  ⓘ 本次查询成功（API 正常），该日期确实没有日报记录。');
 
   const reportData = [];
   for (const r of dayReports) {
@@ -210,6 +287,7 @@ function analyze(targetDate) {
   });
   const tplRecords = tplRaw.filter(r => getAutoDate(r) === targetDate);
   console.log(`  getAutoDate=${targetDate} 的模版记录: ${tplRecords.length} 条`);
+  if (tplRecords.length === 0) console.log('  ⓘ 本次查询成功（API 正常），该日期确实没有模版记录。');
 
   // 3. 任务页 + 项目页
   console.log('3. 获取任务/项目页面...');
@@ -224,7 +302,8 @@ function analyze(targetDate) {
       taskMap[taskId] = {
         person: props['负责人']?.select?.name || '',
         projectId: projId,
-        taskTitle: (props['任务名称']?.title || []).map(t => t.plain_text).join('') || ''
+        taskTitle: (props['任务名称']?.title || []).map(t => t.plain_text).join('') || '',
+        parentRecordId: props['【父记录】']?.relation?.[0]?.id || ''
       };
       if (projId) projectIds.add(projId);
     }
@@ -239,32 +318,68 @@ function analyze(targetDate) {
     }
   }
 
+  // 获取"其它项目"下子项目名称（通过任务的【父记录】字段）
+  const parentRecordIds = new Set();
+  for (const taskId of taskIds) {
+    const task = taskMap[taskId];
+    if (task && task.parentRecordId && task.projectId && projectMap[task.projectId] === '其它项目') {
+      parentRecordIds.add(task.parentRecordId);
+    }
+  }
+  const subProjectMap = {};
+  for (const prId of parentRecordIds) {
+    const prPage = callAPI('GET', `/v2/pages/${prId}`, {});
+    if (prPage.ok && prPage.data) {
+      for (const [name, val] of Object.entries(prPage.data.properties)) {
+        if (val.type === 'title') { subProjectMap[prId] = (val.title || []).map(t => t.plain_text).join(''); break; }
+      }
+    }
+  }
+
   // 4. 模版完整数据（排除张威，按任务负责人）
   const tplFullData = tplRecords.map(r => {
     const taskId = r.properties['任务名称']?.relation?.[0]?.id || '';
     const task = taskMap[taskId] || {};
+    const projectName = task.projectId ? (projectMap[task.projectId] || '') : '';
+    const projectNorm = normProject(projectName);
+    let subProject = '';
+    if (projectNorm === '其它项目' && task.parentRecordId) {
+      subProject = subProjectMap[task.parentRecordId] || '';
+    }
     return {
       tplId: r.id,
       taskId,
       hours: r.properties['实际投入（小时）']?.number,
       person: task.person || '',
-      project: task.projectId ? (projectMap[task.projectId] || '') : '',
-      projectNorm: normProject(task.projectId ? (projectMap[task.projectId] || '') : ''),
-      taskTitle: task.taskTitle || ''
+      project: projectName,
+      projectNorm,
+      taskTitle: (subProject && projectNorm === '其它项目') ? `${subProject}${task.taskTitle || ''}` : (task.taskTitle || ''),
+      subProject
     };
   }).filter(t => t.person !== '张威' && t.person !== '');
   console.log(`  排除张威后模版记录: ${tplFullData.length} 条`);
 
-  // 5. 分组匹配
+  // 5. 分组匹配（"其它项目"用子项目名做二级匹配）
+  function getMatchKey(person, projectNorm, originalProject, subProject) {
+    if (projectNorm === '其它项目') {
+      let subKey = subProject || '';
+      if (!subKey && originalProject) {
+        const cleanName = originalProject.replace(/[〓〒]/g, '').trim();
+        if (OTHER_PROJECT_SUBPATH[cleanName]) subKey = OTHER_PROJECT_SUBPATH[cleanName];
+      }
+      return subKey ? `${person}|||${projectNorm}|||${subKey}` : `${person}|||${projectNorm}`;
+    }
+    return `${person}|||${projectNorm}`;
+  }
   const reportGrouped = {};
   for (const r of reportData) {
-    const key = `${r.person}|||${r.projectNorm}`;
+    const key = getMatchKey(r.person, r.projectNorm, r.project, '');
     if (!reportGrouped[key]) reportGrouped[key] = [];
     reportGrouped[key].push(r);
   }
   const tplGrouped = {};
   for (const t of tplFullData) {
-    const key = `${t.person}|||${t.projectNorm}`;
+    const key = getMatchKey(t.person, t.projectNorm, '', t.subProject);
     if (!tplGrouped[key]) tplGrouped[key] = [];
     tplGrouped[key].push(t);
   }
@@ -272,7 +387,9 @@ function analyze(targetDate) {
   const rows = [];
   let idx = 1;
   for (const key of new Set([...Object.keys(reportGrouped), ...Object.keys(tplGrouped)])) {
-    const [person, projectNorm] = key.split('|||');
+    const parts = key.split('|||');
+    const person = parts[0];
+    const projectNorm = parts[1];
     const reports = reportGrouped[key] || [];
     const templates = tplGrouped[key] || [];
     const reportHours = reports.reduce((s, r) => s + (r.hours || 0), 0);
@@ -297,7 +414,7 @@ function analyze(targetDate) {
       reportHours, reportTaskNames: reports.map(r => r.taskName).filter(Boolean),
       status,
       personTotal,
-      underEight: personTotal != null && personTotal < 8,
+      notEight: personTotal != null && Math.abs(personTotal - 8) > 1e-9,
       templates: templates.map(t => ({ tplId: t.tplId, taskTitle: t.taskTitle, currentHours: t.hours == null ? null : t.hours })),
       defaultHours: reports.length > 0 ? reportHours : null,
       autoResult: null
@@ -312,8 +429,10 @@ function analyze(targetDate) {
 
   // 只要模版里已有任何数据（张威除外）或存在任何问题 → 必须人工确认，绝不自动写入
   const hasExistingData = rows.some(r => r.templates.some(t => t.currentHours != null && t.currentHours > 0));
+  // 任一人当日总工时 ≠ 8 小时（不足或超过，含周彦佐 3h+5h 重复累加这类情况）→ 强制人工确认
+  const notEqEight = t => Math.abs(t - 8) > 1e-9;
   const hasProblem = rows.some(r => ['diff', 'multi', 'report_only'].includes(r.status))
-    || Object.values(personTotals).some(t => t < 8);
+    || Object.values(personTotals).some(notEqEight);
   const needConfirm = hasExistingData || hasProblem;
 
   // 只有模版全部无数据且无任何问题时才自动写入（此时全部为空值待写入）
@@ -339,19 +458,19 @@ function analyze(targetDate) {
     multi: rows.filter(r => r.status === 'multi').length,
     report_only: rows.filter(r => r.status === 'report_only').length,
     unmatched: rows.filter(r => r.status === 'unmatched').length,
-    underEightPersons: Object.entries(personTotals).filter(([p, t]) => t < 8).map(([p, t]) => `${p}(${t}h)`),
+    notEightPersons: Object.entries(personTotals).filter(([p, t]) => notEqEight(t)).map(([p, t]) => `${p}(${t}h)`),
     hasExistingData, autoWritten, autoFail
   };
 
   // 简洁结果行（供 LLM 快速读取）
   const mode = needConfirm ? 'confirm' : 'auto';
-  console.log(`\n[RESULT] mode=${mode} targetDate=${targetDate} autoWritten=${autoWritten} autoFail=${autoFail} pending=${summary.pending} pending_over=${summary.pending_over} diff=${summary.diff} multi=${summary.multi} report_only=${summary.report_only} underEight=${summary.underEightPersons.length}`);
+  console.log(`\n[RESULT] mode=${mode} targetDate=${targetDate} autoWritten=${autoWritten} autoFail=${autoFail} pending=${summary.pending} pending_over=${summary.pending_over} diff=${summary.diff} multi=${summary.multi} report_only=${summary.report_only} notEight=${summary.notEightPersons.length}`);
 
   console.log('\n===== 汇总 =====');
   console.log(`模式: ${needConfirm ? 'confirm（模版有已有数据或存在问题，等待人工确认）' : 'auto（模版全空且无问题，已自动写入）'}`);
   console.log(`待写入: ${summary.pending}  待覆盖: ${summary.pending_over}  有差异: ${summary.diff}  多条模版: ${summary.multi}`);
   console.log(`仅日报: ${summary.report_only}  仅模版: ${summary.unmatched}`);
-  console.log(`不足8小时: ${summary.underEightPersons.length ? summary.underEightPersons.join('、') : '无'}`);
+  console.log(`不等于8小时: ${summary.notEightPersons.length ? summary.notEightPersons.join('、') : '无'}`);
   if (!needConfirm) console.log(`自动写入: ${autoWritten} 成功 / ${autoFail} 失败`);
 
   // auto 模式（自动写入）时输出纯展示明细表（Markdown，无勾选/无输入），供对话页面直接展示；不输出"状态"列（结果列已能体现）
@@ -402,5 +521,14 @@ if (arg1 === 'write') {
   // arg1 可以是日期表达式（"昨天"、"上周五"、"8月21日"等）或 YYYY-MM-DD
   const targetDate = parseDateExpr(arg1 || '');
   console.log(`日期表达式: ${arg1 || '(默认昨天)'} → ${targetDate}`);
-  analyze(targetDate);
+  try {
+    analyze(targetDate);
+  } catch (e) {
+    if (e && e.flowusFailure) {
+      reportQueryFailure(`查询 FlowUs 数据库 ${e.dbId}`, e.flowusFailure);
+    } else {
+      console.error(`\n❌ 执行失败：${e && e.message ? e.message : e}\n`);
+    }
+    process.exit(2); // 显式失败，避免被当成"无数据"继续往下走
+  }
 }
