@@ -268,6 +268,23 @@ function removeColons(text) {
   return text.replace(/(.{1,4})：/g, "$1").replace(/：/g, "，");
 }
 
+// 去掉条目末尾的标点与空白（句号/分号/逗号/顿号/问号等）
+// 1) 条目会以 "、" 拼接成 "A、B、C等X"，若条目自带末尾句号会产生 "。、" 这类怪组合
+// 2) 末尾标点会让 stripActionSuffix 的 "$" 结尾匹配失效（如 "XX功能开发。" 剥不掉 "功能开发"）
+function trimEndPunct(text) {
+  return String(text == null ? "" : text).replace(/[。．.；;，,、！!?？:：\s]+$/, "");
+}
+
+// 去掉条目末尾的"等"字：拼接时末尾的"等"由统一 suffix 提供，条目自带"等"会产生"等等"
+function stripTrailingEtc(text) {
+  return String(text == null ? "" : text).replace(/等+$/, "");
+}
+
+// 参与 "、" 拼接前的统一清洗
+function cleanForJoin(text) {
+  return stripTrailingEtc(trimEndPunct(text));
+}
+
 // Group thematically related items: when 3+ items share a common prefix (>=2 chars),
 // merge ALL into one summary. If more than 5 items, list the 5 shortest.
 // Determine suffix based on task nature
@@ -300,7 +317,7 @@ function combineSuffix(prefix, suffix) {
 // Strip common action suffixes from an item to get the differentiating part
 // Returns empty string if result is a common action word (caller should check)
 function stripActionSuffix(item) {
-  const stripped = item
+  const stripped = trimEndPunct(item)
     .replace(/(模块)?(功能)?开发$/, "")
     .replace(/问题?处理$/, "")
     .replace(/(功能)?(开发|调整|改造|优化|修改|完善|测试|验证|发布)$/, "")
@@ -378,16 +395,16 @@ function groupThemes(items) {
           });
           const meaningfulParts = parts.filter(p => isMeaningfulPart(p));
           if (meaningfulParts.length === groupItems.length) {
-            const label = `${displayName}${meaningfulParts.join("、")}等${suffix}`;
+            const label = `${displayName}${meaningfulParts.map(cleanForJoin).join("、")}等${suffix}`;
             result.push(label);
             explicitListingMap.set(label, combineSuffix(displayName, suffix));
           } else {
             const itemsToList = groupItems.sort((a, b) => a.length - b.length).slice(0, 7);
-            result.push(`${combineSuffix(displayName, suffix)}：包括${itemsToList.join("、")}等`);
+            result.push(`${combineSuffix(displayName, suffix)}：包括${itemsToList.map(cleanForJoin).join("、")}等`);
           }
         } else {
           const itemsToList = groupItems.sort((a, b) => a.length - b.length).slice(0, 7);
-          result.push(`${displayName}相关工作：包括${itemsToList.join("、")}等`);
+          result.push(`${displayName}相关工作：包括${itemsToList.map(cleanForJoin).join("、")}等`);
         }
         groupIndices.forEach(idx => used.add(idx));
       }
@@ -437,16 +454,16 @@ function mergeByPrefix(items) {
             });
             const meaningfulParts = parts.filter(p => isMeaningfulPart(p));
             if (meaningfulParts.length === group.length) {
-              const label = `${prefix}${meaningfulParts.join("、")}等${dynSuffix}`;
+              const label = `${prefix}${meaningfulParts.map(cleanForJoin).join("、")}等${dynSuffix}`;
               result.push(label);
               explicitListingMap.set(label, combineSuffix(prefix, dynSuffix));
             } else {
               const itemsToList = group.sort((a, b) => a.length - b.length).slice(0, 7);
-              result.push(`${combineSuffix(prefix, dynSuffix)}：包括${itemsToList.join("、")}等`);
+              result.push(`${combineSuffix(prefix, dynSuffix)}：包括${itemsToList.map(cleanForJoin).join("、")}等`);
             }
           } else {
             const itemsToList = group.sort((a, b) => a.length - b.length).slice(0, 7);
-            result.push(`${prefix}相关工作：包括${itemsToList.join("、")}等`);
+            result.push(`${prefix}相关工作：包括${itemsToList.map(cleanForJoin).join("、")}等`);
           }
         }
         used.add(i);
@@ -524,7 +541,7 @@ function mergePairedGroups(items) {
       const allParts = [...new Set([...iParts, ...jParts])];
       allParts.sort((a, b) => a.length - b.length);
       if (allParts.length >= 2) {
-        const newLabel = `${prefix}${allParts.join("、")}等${suffix}`;
+        const newLabel = `${prefix}${allParts.map(cleanForJoin).join("、")}等${suffix}`;
         result.push(newLabel);
         explicitListingMap.set(newLabel, combineSuffix(prefix, suffix));
       } else {
@@ -695,6 +712,7 @@ function buildPersonSummary() {
           if (date !== lastDayStr) {
             cleaned = stripPercentage(cleaned);
           }
+          cleaned = trimEndPunct(cleaned);
           if (isProgressMeaningful(cleaned) && cleaned.length < 50) {
             if (!seen.has(cleaned)) {
               seen.add(cleaned);
@@ -862,7 +880,7 @@ function mergeRelatedGroupsForSuffix(items, suffix, excludeSuffixes = []) {
       }
       const allDetails = mergeList.map(m => m.d).filter(d => d);
       if (allDetails.length > 0) {
-        const content = allDetails.map(d => d.replace(/^：包括/, "").replace(/等$/, "")).join("、");
+        const content = allDetails.map(d => cleanForJoin(d.replace(/^：包括/, "").replace(/等$/, ""))).join("、");
         result.push(`${newLabel}：包括${content}等`);
       } else {
         result.push(newLabel);
@@ -910,7 +928,7 @@ function mergeSubCategories(items) {
       if (absorbedDetails.length > 0) {
         const existingDetails = getItemDetails(broadItem);
         const existingContent = existingDetails ? existingDetails.replace(/^：包括/, "").replace(/等$/, "") : "";
-        const allContent = [...absorbedDetails, existingContent].filter(d => d).join("、");
+        const allContent = [...absorbedDetails, existingContent].filter(d => d).map(cleanForJoin).join("、");
         broadItem = allContent ? `${broadLabel}：包括${allContent}等` : broadLabel;
       }
       filtered.push(broadItem);
@@ -968,7 +986,7 @@ function simplifySummary(items, keepDetails = false) {
     const others = simplified.filter(item => !prodGroups.includes(item));
     const allDetails = prodGroups.map(getItemDetails).filter(d => d);
     if (allDetails.length > 0) {
-      const content = allDetails.map(d => d.replace(/^：包括/, "").replace(/等$/, "")).join("、");
+      const content = allDetails.map(d => cleanForJoin(d.replace(/^：包括/, "").replace(/等$/, ""))).join("、");
       others.push(`运维相关问题处理：包括${content}等`);
     } else {
       others.push("运维相关问题处理");
@@ -1007,7 +1025,7 @@ function simplifySummary(items, keepDetails = false) {
         // Merge details from duplicate "运维及其他工作" items
         const d1 = getItemDetails(otherItem).replace(/^：包括/, "").replace(/等$/, "");
         const d2 = getItemDetails(item).replace(/^：包括/, "").replace(/等$/, "");
-        const combined = [d1, d2].filter(d => d).join("、");
+        const combined = [d1, d2].filter(d => d).map(cleanForJoin).join("、");
         otherItem = combined ? `运维及其他工作：包括${combined}等` : "运维及其他工作";
       }
     } else {

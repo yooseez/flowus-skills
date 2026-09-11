@@ -74,6 +74,26 @@ python "C:\Users\HONOR\Documents\flowus-skills\generate-monthly-report\extract_m
 2. 重新运行提取脚本
 3. **不得带着警告直接生成报告**
 
+> **⚠️ 认证：脚本不固化认证方式，只在 CLI 自己没法认证时才兜底**
+>
+> 脚本**默认完全不碰 `FLOWUS_TOKEN`**——先让 FlowUs CLI 自己认证（env 静态密钥 / OAuth / 由调用方环境决定），行为与改造前一致，因此 **TRAE 等自带认证的环境无需任何改动**。
+>
+> 只有当 CLI **明确回报「缺少 token」**时，脚本才从注册表 `HKCU\Environment\FLOWUS_TOKEN` 读一次（python `winreg`，进程内读、不落盘、不 spawn `reg.exe`）注入并**重试一次**。这就是 WorkBuddy 会话没继承环境变量时的自愈路径，stdout 会打印 `[auth] CLI 报缺少 token，已从注册表读取 FLOWUS_TOKEN（长度 40）并重试一次`。
+>
+> **关闭兜底**（如 TRAE 要完全走自己的认证）：设 `FLOWUS_SKIP_TOKEN_FALLBACK=1`，脚本绝不读写 `FLOWUS_TOKEN`，直接把 CLI 原始报错交回。
+>
+> ❌ **禁止事项**（WorkBuddy 侧一律不走网页认证 / OAuth 那条路）：
+> - 不要执行 `flowus.exe login`
+> - 不要读取或检查 `C:\Users\HONOR\.flowus\credentials.json`
+> - 不要参照 TRAE 的 MCP 令牌配置（`%APPDATA%\TRAE SOLO CN\User\mcp.json` 里 URL 上的 `?token=`）
+> - 不要为了认证去调 PowerShell / 手动 `export` —— 脚本自己会读，多此一举还容易把令牌搞失效
+>
+> 原因：网页授权是"重新签发新令牌、旧令牌作废"，同属一套授权体系，动它就会把静态密钥方案连带搞坏。
+>
+> **0 条记录如何判断**：脚本已内置区分，看**退出码 + stderr** 即可，无需再做任何认证排查——
+> - 退出码 **2**，stderr 出现 `✖ 数据读取失败 —— 这【不是】"该日期无数据"` → 认证/权限问题。唯一处理方式：请用户确认 Windows **用户级**环境变量 `FLOWUS_TOKEN` 已配置（40 字符静态密钥），配好后重跑即可
+> - 退出码 **0**，stdout 出现 `ⓘ 本次查询成功（API 正常），该日期范围确实没有日报记录。` → 真·无数据，可如实告知用户
+
 ### 3. 生成 Word 文档
 
 确保 `docx` npm 包可用（首次使用时运行 `npm install docx`），然后执行：
@@ -147,6 +167,10 @@ node "C:\Users\HONOR\Documents\flowus-skills\generate-monthly-report\gen_month_d
 - 条目过多时：>15条只留主题组和类别标签；>8条先按多天保留（dropSecondaryTasks 删除部署/熟悉/初始化等次要任务）
 - 分类排序（sortByCategory/classifyWork）：按 功能开发→问题处理→文档→运维→需求沟通→售前→其他 排序，主题组排前，"运维及其他工作"永远最后
 - 排版格式化（formatWorkItems）：按类别排序后编号
+- 拼接清洁（trimEndPunct / stripTrailingEtc / cleanForJoin）：条目在参与 "、" 拼接前去掉末尾标点（。；，、！？等）与末尾"等"字
+  - 末尾标点会造成 "。、" 怪组合（如"…公司领导。、杭州机场…"）
+  - 末尾标点还会让 stripActionSuffix 的结尾匹配失效（如 "XX功能开发。" 剥不掉 "功能开发"）
+  - 条目自带"等"再拼 suffix 会重复成"等等"（如"…反馈等等功能开发" → "…反馈等功能开发"）
 - 不列出每日任务标签，因为任务标签加起来不等于总工时
 - 跨月时标题为纯"项目月报"（无括号日期），单月时为"项目月报（YYYY年M月）"
 

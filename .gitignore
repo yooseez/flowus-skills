@@ -1,14 +1,2 @@
-node_modules/
-package-lock.json
-*_data.json
-q_*.json
-*.log
-
-# Mock / test files
-gen_mock_data.js
-
-# Sync daily report state files (regenerated on each run, do not commit)
-fill_state_*.json
-
-# TRAE platform internal files
-.disable_to_model_invocation_migration.json
+__pycache__/
+*.pyc
