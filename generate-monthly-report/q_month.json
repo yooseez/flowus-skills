@@ -1,1 +1,0 @@
-{"page_size": 100, "sorts": [{"property": "\u65e5\u671f", "direction": "ascending"}], "filter": {"and": [{"property": "\u65e5\u671f", "date": {"on_or_after": "2026/09/01"}}, {"property": "\u65e5\u671f", "date": {"on_or_before": "2026/09/11"}}]}}
