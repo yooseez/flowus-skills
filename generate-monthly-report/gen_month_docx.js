@@ -102,6 +102,29 @@ const sortedProjects = Object.keys(projHours).sort((a, b) => {
 });
 const sortedPersons = Object.keys(personHours).sort();
 
+// ===== 请假 / 调休工时（人 → 项目），用于个人工作总结的「含调休N天」（2026-09-25 用户定稿）=====
+// 统计口径：日报条目里「任务名称」命中请假/调休关键词的工时，按该条目所选项目归集；
+// 天数 = 工时 / 8，保留 1 位小数（整数不显示小数）。用词跟随日报原文：出现「调休」用调休，否则用请假。
+const LEAVE_RE = /请假|调休|休假|年休|事假|病假|婚假|产假|陪产|丧假/;
+const personProjLeave = {};   // person -> 项目(已去〓) -> { hours, kinds: Set }
+for (const r of data) {
+  personProjLeave[r.person] = personProjLeave[r.person] || {};
+  for (const p of r.projects) {
+    if (!p.task || !LEAVE_RE.test(p.task)) continue;
+    const key = cleanName(p.project);
+    const slot = personProjLeave[r.person][key] || (personProjLeave[r.person][key] = { hours: 0, kinds: new Set() });
+    slot.hours += p.hours || 0;
+    slot.kinds.add(/调休/.test(p.task) ? '调休' : '请假');
+  }
+}
+function leaveDaysText(person, projName) {
+  const slot = personProjLeave[person] && personProjLeave[person][projName];
+  if (!slot || slot.hours <= 0) return '';
+  const d = Math.round(slot.hours / 8 * 10) / 10;
+  const word = slot.kinds.has('调休') ? '调休' : '请假';
+  return `，含${word}${Number.isInteger(d) ? d : d.toFixed(1)}天`;
+}
+
 // ============ Helper Functions ============
 const FONT = "Microsoft YaHei";
 const FONT_SONG = "SimSun";
@@ -743,6 +766,9 @@ function buildPersonSummary() {
       const filteredWork = filterTrivialTasks(mainWork);
       if (filteredWork.length > 0) mainWork = filteredWork;
 
+      // Save raw work items before maintenance preprocessing (for 运维-only fallback)
+      const rawWorkItems = [...mainWork];
+
       // Pre-process maintenance tasks ("处理" prefix → 运维)
       mainWork = preprocessMaintenanceTasks(mainWork);
 
@@ -781,6 +807,15 @@ function buildPersonSummary() {
       // If still many, drop secondary/setup tasks
       if (grouped.length > 8) {
         grouped = dropSecondaryTasks(grouped);
+      }
+      // If only "运维及其他工作" remains, expand with a few specific items from raw data
+      if (grouped.length === 1 && grouped[0] === "运维及其他工作" && rawWorkItems.length > 1) {
+        const specificItems = rawWorkItems
+          .filter(item => !item.startsWith("处理"))
+          .slice(0, 3);
+        if (specificItems.length > 0) {
+          grouped = [...specificItems, "运维及其他工作"];
+        }
       }
       const items = formatWorkItems(grouped);
 
@@ -1126,6 +1161,16 @@ function buildProjectSummary() {
     items = simplifySummary(items);
     items = dropSecondaryTasks(items);
 
+    // If only "运维及其他工作" remains, expand with a few specific items from raw data
+    if (items.length === 1 && items[0] === "运维及其他工作" && uniqueItems.length > 1) {
+      const specificItems = uniqueItems
+        .filter(item => !item.startsWith("处理"))
+        .slice(0, 3);
+      if (specificItems.length > 0) {
+        items = [...specificItems, "运维及其他工作"];
+      }
+    }
+
     // If still many, drop single-person minor tasks (keep thematic groups and category labels)
     const categoryLabels = ["编写说明文档", "操作指引沟通"];
     if (items.length > 8) {
@@ -1301,7 +1346,7 @@ const personSummaryElements = workSummaries.flatMap(({ person, totalHours, days,
     paras.push(new Paragraph({
       spacing: { before: 40, after: 20 },
       indent: { left: 120 },
-      children: [new TextRun({ text: `${name}  ${hours}工时（合计${pdStr(hours)}人天），填报${pdays}次`, font: FONT, size: 21, bold: true })],
+      children: [new TextRun({ text: `${name}  ${hours}工时（合计${pdStr(hours)}人天${leaveDaysText(person, name)}），填报${pdays}次`, font: FONT, size: 21, bold: true })],
     }));
     for (const item of items) {
       paras.push(new Paragraph({

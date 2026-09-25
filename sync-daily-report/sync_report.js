@@ -43,6 +43,65 @@ const OTHER_PROJECT_SUBPATH = {
   '集团采购': '公司/集团项目',
 };
 
+// 子项目显示拼接名单（2026-09-18 用户定稿）：统一规则 = 模版任务列不拼接子项目名
+// （所有项目一视同仁，项目列已能区分）；只有仍挂在"其它"下、需要特殊标识的子项目
+// （当前仅「公司/集团项目」）才拼接，顺序为【任务类型】在前、子项目名在后，
+// 如「【其它】公司/集团项目」。中国诚通等已是独立项目，不在此名单，走统一规则。
+// 注意：仅影响显示，匹配逻辑（二级匹配）不受影响。
+const SUBPROJECT_DISPLAY_SHOW = new Set(['公司/集团项目']);
+
+// ===== “其它项目”子项目识别（2026-09-21 用户规则）=====
+// 日报项目直选〓其它项目〓时，真实项目名一般写在任务名称/进展说明里（如“北银项目”）：
+//   1) 在「项目任务表」的“其它项目”下能找到类似项目 → 标记建议归属，确认页面询问是否归入该项目的任务；
+//   2) 找不到 → 默认归入 其它项目-其它-【其它】（模版已有该行则直接匹配写入；
+//      模版没有该行 → 保持仅日报，确认页面提供“新建模版记录并写入”选项，不静默建记录）。
+const TASK_DB = '9686c696-3b1f-4661-bb91-fec726425c4d';
+const OTHER_PROJECT_ID = 'b59cf01c-40d9-4ea6-9a9f-3b761ce7f5ba'; // 兜底，正常可从 projectMap 反查
+
+// 查询「项目任务表」，取“其它项目”下的子项目（顶级行）与任务（子行）
+function fetchOtherProjectTree(projectMap) {
+  const empty = { subProjects: [], tasks: [] };
+  const otherProjId = Object.keys(projectMap).find(id => projectMap[id] === '其它项目') || OTHER_PROJECT_ID;
+  try {
+    const rows = queryDB(TASK_DB, { page_size: 100 });
+    const mine = rows.filter(r => (r.properties['所属项目']?.relation || []).some(x => x.id === otherProjId));
+    const subProjects = [], tasks = [], idName = {};
+    for (const r of mine) {
+      const props = r.properties;
+      let title = '';
+      for (const [n, v] of Object.entries(props)) if (v.type === 'title') { title = (v.title || []).map(t => t.plain_text).join(''); break; }
+      const parentId = props['【父记录】']?.relation?.[0]?.id || '';
+      if (!parentId) { subProjects.push({ id: r.id, name: title }); idName[r.id] = title; }
+      else tasks.push({ id: r.id, parentId, person: props['负责人']?.select?.name || '', title });
+    }
+    for (const t of tasks) t.parentName = idName[t.parentId] || '';
+    return { subProjects, tasks };
+  } catch (e) {
+    console.log('  ⚠️ 项目任务表查询失败，跳过“其它项目”识别：' + (e && e.message ? e.message : e));
+    return empty;
+  }
+}
+
+// 从任务名称/进展说明里识别“其它项目”下的子项目名；返回 { sub, token }（sub 为空 = 未找到类似项目）
+function detectSubProject(taskName, prog, subProjects) {
+  const text = `${taskName || ''}\n${prog || ''}`;
+  const names = subProjects.map(s => s.name).filter(n => n && n !== '其它');
+  // 1) 直接包含子项目名（如“中国诚通”）
+  for (const n of names) if (text.includes(n)) return { sub: n, token: n };
+  // 2) 提取「XX项目/系统/平台/工程/产品」词，与子项目名（按 / 拆段）互相包含
+  const tokens = new Set();
+  for (const m of text.matchAll(/([一-龥A-Za-z0-9]{2,12}?)(?:项目|系统|平台|工程|产品)/g)) tokens.add(m[1]);
+  for (const tk of tokens) {
+    if (tk.length < 2 || tk === '其它') continue;
+    for (const n of names) {
+      for (const seg of n.split('/')) {
+        if (seg.length >= 2 && (seg.includes(tk) || tk.includes(seg))) return { sub: n, token: tk };
+      }
+    }
+  }
+  return { sub: '', token: [...tokens].find(t => t.length >= 2) || '' };
+}
+
 // ===== 认证 / API 错误判定 =====
 // 实测 CLI 失败时 stdout 仍是 JSON，同时 stderr 有一行纯文本：
 //   token 无效 : {"error":{"code":"unauthorized","message":"Invalid or expired token","status":401}}            退出码 2
@@ -144,6 +203,14 @@ function getProp(props, name, ptype) {
 
 function getPersonName(uid) { return USER_MAP[uid] || `未知(${uid ? uid.slice(0,8) : '无'})`; }
 
+// ===== 请假 / 调休保障（2026-09-25 用户定稿）=====
+// 共享模块 leave_task.js：按「该人最近一个有真实项目日报的日期」定位项目，
+// 在该项目的「其它」顶级行下确保存在【请假调休】任务（去重、自动赋值项目/负责人/状态）。
+// 默认只预演；加 --leave-apply 或 LEAVE_APPLY=1 才真正写入 FlowUs。
+const { isLeaveText, ensureLeaveTask, createLeaveTpl, resolveProjectForEntry, LEAVE_TITLE } = require('./leave_task.js');
+const LEAVE_APPLY = process.argv.includes('--leave-apply') || process.env.LEAVE_APPLY === '1';
+const LEAVE_CTX = { callAPI, queryDB, getPersonName };
+
 function normProject(name) {
   let n = name.replace(/[〓〒]/g, '').trim();
   if (PROJECT_ALIAS[n]) n = PROJECT_ALIAS[n];
@@ -228,6 +295,13 @@ function writeHours(pageId, hours) {
   });
 }
 
+// 备注同步：模版「备注」是 title 字段，写入格式固定为 任务名称+进展说明 多行文本
+function writeBeizhu(pageId, text) {
+  return callAPI('PATCH', `/v2/pages/${pageId}`, {
+    properties: { '备注': { type: 'title', title: [{ type: 'text', text: { content: text } }] } }
+  });
+}
+
 // ===== 分析 + 自动写入 =====
 function analyze(targetDate) {
   console.log(`目标日期: ${targetDate}`);
@@ -255,16 +329,17 @@ function analyze(targetDate) {
     for (let i = 1; i <= 3; i++) {
       const proj = getProp(r.properties, `项目-${i}`, 'select');
       const taskName = getProp(r.properties, `任务名称-${i}`, 'rich_text');
+      const prog = getProp(r.properties, `进展说明-${i}`, 'rich_text');
       const hrs = getProp(r.properties, `任务工时-${i}`, 'number');
       if (proj || hrs > 0) {
         const project = proj || '';
-        reportData.push({ person, project, projectNorm: proj ? normProject(proj) : '', taskName, hours: hrs });
+        reportData.push({ person, project, projectNorm: proj ? normProject(proj) : '', taskName, hours: hrs, prog });
         console.log(`  [日报条目] ${person} | 项目:${proj || '(空)'} | 工时:${hrs} | 任务:${taskName || '(空)'}`);
       }
     }
     const opsTask = getProp(r.properties, '运维工作', 'select');
     const opsHrs = getProp(r.properties, '运维工时', 'number');
-    if (opsTask) { reportData.push({ person, project: '运维', projectNorm: '运维', taskName: opsTask, hours: opsHrs });
+    if (opsTask) { reportData.push({ person, project: '运维', projectNorm: '运维', taskName: opsTask, hours: opsHrs, prog: '' });
       console.log(`  [日报条目] ${person} | 项目:运维 | 工时:${opsHrs} | 任务:${opsTask}`);
     }
   }
@@ -278,10 +353,71 @@ function analyze(targetDate) {
   }
   console.log('  每人日报合计:', JSON.stringify(personTotals));
 
+  // 1.5 请假 / 调休保障（条目级，2026-09-25 用户定稿）
+  //   归属项目按「日报条目」判断：条目自带真实项目 → 用它；条目选了「其它项目」→ 回溯最近真实项目中工时最大的那个。
+  //   目标项目没有「其它」顶级行 → 先新建「其它」，再挂【请假调休】（请假调休算项目成本，不挂其它项目/其它）。
+  //   全天请假 → 自动补一条模版记录，让工时能自动同步；
+  //   混合日（如 调休3h + 开发5h）→ 只确保任务存在，不自动建模版记录（避免制造 multi，交给确认页绑定）。
+  const leaveRows = [];
+  {
+    const byPerson = {};
+    for (const r of reportData) {
+      if (r.person === '张威' || r.person.startsWith('未知')) continue;
+      (byPerson[r.person] = byPerson[r.person] || []).push(r);
+    }
+    for (const [person, entries] of Object.entries(byPerson)) {
+      const leave = entries.filter(e => isLeaveText(e.taskName, e.prog, e.project));
+      if (!leave.length) continue;
+      const real = entries.filter(e => e.projectNorm && !isLeaveText(e.taskName, e.prog, e.project));
+      leaveRows.push({ person, leave, real, allDay: real.length === 0 });
+    }
+  }
+  if (leaveRows.length) {
+    console.log(`1.5 请假/调休保障（apply=${LEAVE_APPLY ? '是' : '否 · 仅预演'}）...`);
+    for (const lr of leaveRows) {
+      // 按归属项目聚合：同一项目的多条请假条目只建一个任务
+      const byProj = new Map();
+      for (const e of lr.leave) {
+        const rp = resolveProjectForEntry(LEAVE_CTX, e, lr.person, targetDate);
+        if (!rp.ok) { console.log(`  ❌ ${lr.person}：${rp.reason}`); continue; }
+        if (!byProj.has(rp.projectName)) byProj.set(rp.projectName, { reason: rp.reason, hours: 0 });
+        byProj.get(rp.projectName).hours += (e.hours || 0);
+      }
+      for (const [projectName, info] of byProj) {
+        console.log(`  [归属] ${lr.person} 请假 ${info.hours}h → ${info.reason}`);
+        // 全天请假：把日报条目的归属项目改成【请假调休】任务所在项目，
+        // 否则日报记在「其它项目」、模版记在真实项目，两组对不上，8 小时永远同步不过去。
+        if (lr.allDay) {
+          for (const e of lr.leave) { e.projectNorm = projectName; e.project = `〓${projectName}〓`; }
+        }
+        const r1 = ensureLeaveTask(LEAVE_CTX, { person: lr.person, projectName, apply: LEAVE_APPLY });
+        if (!r1.ok) { console.log(`  ❌ ${lr.person} / ${projectName}：${r1.reason}`); continue; }
+        if (r1.created) console.log(`  ✅ ${lr.person}：已在「${r1.projectName} / 其它」下创建「${LEAVE_TITLE}」taskId=${r1.taskId.slice(0, 8)}…`);
+        else if (r1.wouldCreate) console.log(`  ⓘ ${lr.person}：${r1.plan}`);
+        else console.log(`  ⓘ ${lr.person}：复用已有「${LEAVE_TITLE}」taskId=${r1.taskId.slice(0, 8)}…（${r1.projectName} / 其它）`);
+        if (r1.otherCreated) console.log(`     ↳ 已先新建「其它」顶级行（该项目原本没有）`);
+        if (r1.fallbackReason) console.log(`     ↳ 兜底原因：${r1.fallbackReason}`);
+        if (!LEAVE_APPLY || !r1.taskId) continue;
+        if (!lr.allDay) {
+          console.log(`  ⓘ ${lr.person}：混合日（请假 ${info.hours}h + 实际工作 ${lr.real.reduce((s, e) => s + (e.hours || 0), 0)}h），只确保任务存在，模版记录请在确认页绑定`);
+          continue;
+        }
+        const r2 = createLeaveTpl(LEAVE_CTX, { taskId: r1.taskId, targetDate, apply: LEAVE_APPLY });
+        if (r2.ok && r2.created) console.log(`  ✅ ${lr.person}：已新建模版记录 tplId=${r2.tplId.slice(0, 8)}…（填报日期=${targetDate}）`);
+        else if (r2.ok && r2.reused) console.log(`  ⓘ ${lr.person}：复用已有模版记录 tplId=${r2.tplId.slice(0, 8)}…`);
+        else if (!r2.ok) console.log(`  ❌ ${lr.person}：${r2.reason}`);
+      }
+    }
+  }
+
   // 2. 模版（getAutoDate 判定日期）
+  // 查询窗口 = min(目标日-3天, 今天-3天)：只按目标日算时，若目标日在 3 天之后（如提前填报下周的假），
+  // 今天刚创建的模版记录 created_time 会落在窗口外被漏掉（2026-09-25 修）。
+  const todayBJ = new Date(Date.now() + 8 * 3600 * 1000).toISOString().split('T')[0];
+  const tplWindowFrom = [shiftDate(targetDate, -3), shiftDate(todayBJ, -3)].sort()[0];
   console.log('2. 查询模版...');
   const tplRaw = queryDB(TEMPLATE_DB, {
-    filter: { timestamp: "created_time", created_time: { on_or_after: shiftDate(targetDate, -3) } },
+    filter: { timestamp: "created_time", created_time: { on_or_after: tplWindowFrom } },
     sorts: [{ timestamp: "created_time", direction: "ascending" }],
     page_size: 100
   });
@@ -336,6 +472,23 @@ function analyze(targetDate) {
     }
   }
 
+  // 3.5 “其它项目”子项目识别树（项目任务表全量）+ 日报条目二级识别
+  const otherTree = fetchOtherProjectTree(projectMap);
+  for (const r of reportData) {
+    r.suggestedSub = ''; r.suggestToken = ''; r.autoSub = '';
+    if (r.projectNorm !== '其它项目') continue;
+    const clean = (r.project || '').replace(/[〓〒]/g, '').trim();
+    if (OTHER_PROJECT_SUBPATH[clean]) continue;   // 已有固定映射（中国诚通/集团采购）
+    const hit = detectSubProject(r.taskName, r.prog, otherTree.subProjects);
+    if (hit.sub) {
+      r.suggestedSub = hit.sub; r.suggestToken = hit.token;
+      console.log(`  [其它项目识别] ${r.person} 提到「${hit.token}」→ 找到类似项目「${hit.sub}」，确认页面将询问是否归入`);
+    } else {
+      r.autoSub = '其它'; r.suggestToken = hit.token;
+      console.log(`  [其它项目识别] ${r.person} 提到「${hit.token || '未写明'}」→ “其它项目”下无该项目，归入 其它/【其它】`);
+    }
+  }
+
   // 4. 模版完整数据（排除张威，按任务负责人）
   const tplFullData = tplRecords.map(r => {
     const taskId = r.properties['任务名称']?.relation?.[0]?.id || '';
@@ -350,10 +503,11 @@ function analyze(targetDate) {
       tplId: r.id,
       taskId,
       hours: r.properties['实际投入（小时）']?.number,
+      beizhuCur: (r.properties['备注']?.title || []).map(t => t.plain_text).join(''),
       person: task.person || '',
       project: projectName,
       projectNorm,
-      taskTitle: (subProject && projectNorm === '其它项目') ? `${subProject}${task.taskTitle || ''}` : (task.taskTitle || ''),
+      taskTitle: (subProject && projectNorm === '其它项目' && SUBPROJECT_DISPLAY_SHOW.has(subProject)) ? `${task.taskTitle || ''}${subProject}` : (task.taskTitle || ''),
       subProject
     };
   }).filter(t => t.person !== '张威' && t.person !== '');
@@ -373,7 +527,7 @@ function analyze(targetDate) {
   }
   const reportGrouped = {};
   for (const r of reportData) {
-    const key = getMatchKey(r.person, r.projectNorm, r.project, '');
+    const key = getMatchKey(r.person, r.projectNorm, r.project, r.autoSub || '');
     if (!reportGrouped[key]) reportGrouped[key] = [];
     reportGrouped[key].push(r);
   }
@@ -412,14 +566,36 @@ function analyze(targetDate) {
       no: 0,
       key, person, project: projDisplay, projectNorm,
       reportHours, reportTaskNames: reports.map(r => r.taskName).filter(Boolean),
+      reportProgs: [...new Set(reports.map(r => r.prog).filter(Boolean))],
       status,
       personTotal,
       notEight: personTotal != null && Math.abs(personTotal - 8) > 1e-9,
-      templates: templates.map(t => ({ tplId: t.tplId, taskTitle: t.taskTitle, currentHours: t.hours == null ? null : t.hours })),
+      suggestedSub: reports.length > 0 ? (reports[0].suggestedSub || '') : '',
+      suggestToken: reports.length > 0 ? (reports[0].suggestToken || '') : '',
+      autoSub: reports.length > 0 ? (reports[0].autoSub || '') : '',
+      bindTargets: [],
+      templates: templates.map(t => ({ tplId: t.tplId, taskTitle: t.taskTitle, currentHours: t.hours == null ? null : t.hours, beizhuCur: t.beizhuCur || '' })),
       defaultHours: reports.length > 0 ? reportHours : null,
       autoResult: null
     };
     rows.push(row);
+  }
+
+  // “其它项目”未匹配行的可归入目标（建议子项目优先，其次 其它）：
+  // 模版已有该子项目行 → 绑定已有模版；否则用项目任务表里的任务新建模版记录（确认页面提交时才创建）
+  for (const row of rows) {
+    if (row.status !== 'report_only') continue;
+    if (!row.suggestedSub && !row.autoSub) continue;
+    const wantSubs = [...new Set([row.suggestedSub, row.autoSub].filter(Boolean))];
+    for (const ws of wantSubs) {
+      const tplRows = tplGrouped[`${row.person}|||其它项目|||${ws}`] || [];
+      if (tplRows.length === 1) {
+        row.bindTargets.push({ type: 'tpl', id: tplRows[0].tplId, taskTitle: tplRows[0].taskTitle, subProject: ws, label: `已有模版：其它项目-${ws}-${tplRows[0].taskTitle}` });
+      } else {
+        const task = otherTree.tasks.find(t => t.parentName === ws && t.person === row.person);
+        if (task) row.bindTargets.push({ type: 'create', id: task.id, taskTitle: task.title, subProject: ws, label: `新建模版：其它项目-${ws}-${task.title}` });
+      }
+    }
   }
 
   // 排序：先按人员分组（同一人的行连在一起），人员内再按 待写入→待覆盖→有差异→多条→仅日报→仅模版
@@ -449,6 +625,24 @@ function analyze(targetDate) {
       if (r.ok) { t.currentHours = row.reportHours; autoWritten++; } else autoFail++;
     }
   }
+
+  // ===== 备注同步（任务名称+进展说明；无论 auto/confirm 都执行，但绝不覆盖已有备注）=====
+  // 规则：仅单条模版记录且当天有对应日报条目的行才写；备注已有内容（含人工填写）一律跳过
+  let bzWritten = 0, bzSkipExist = 0, bzNoProg = 0, bzFail = 0;
+  for (const row of rows) {
+    if (row.templates.length !== 1) continue;          // 无模版记录 / 多条模版 → 不动备注
+    if (row.reportTaskNames.length === 0) continue;    // 仅模版行（当天无日报）→ 保持为空
+    const t = row.templates[0];
+    if (t.beizhuCur) { bzSkipExist++; continue; }
+    const task = [...new Set(row.reportTaskNames)].join('、');
+    const prog = row.reportProgs.join('\n');
+    if (!prog) { bzNoProg++; continue; }
+    const text = `任务名称：${task}\n进展说明：\n${prog}`;
+    const w = writeBeizhu(t.tplId, text);
+    if (w.ok) { t.beizhuCur = text; bzWritten++; console.log(`  [备注写入] ${row.person} / ${row.project} (${t.taskTitle})`); }
+    else { bzFail++; console.log(`  [备注失败] ${row.person} / ${row.project}: ${JSON.stringify(w).slice(0,150)}`); }
+  }
+  console.log(`备注同步: 写入 ${bzWritten} / 已有跳过 ${bzSkipExist} / 无进展跳过 ${bzNoProg}` + (bzFail ? ` / 失败 ${bzFail}` : ''));
 
   const summary = {
     mode: needConfirm ? 'confirm' : 'auto',   // auto=模版全空且无问题，已自动写入；confirm=有数据或有问题，需人工确认

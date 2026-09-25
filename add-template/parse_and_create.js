@@ -1,5 +1,7 @@
 const { spawnSync } = require('child_process');
 const fs = require('fs');
+const os = require('os');
+const path = require('path');
 
 const DB_ID = 'bc84d926-8df2-4662-9751-6a35e8761d14';
 const CLI = 'C:\\Users\\HONOR\\AppData\\Local\\Programs\\FlowUs\\bin\\flowus.exe';
@@ -9,6 +11,47 @@ const SKIP_CHECK = process.argv[4] === 'skip';
 const RESULT_FILE = (process.argv[4] === 'skip' || process.argv[4] === 'noskip') ? process.argv[5] : process.argv[4];
 
 const QUERY_BODY_FILE = process.argv[6] || '';
+
+// ===== 请假 / 调休覆盖（2026-09-25 用户定稿）=====
+// 规则：先看目标日的日报，某人是请假/调休时 ——
+//   · 全天请假 → 用该人的【请假调休】任务 **替换** 从源日期复制来的普通任务（不照抄前一天任务）
+//   · 部分请假（如 调休3h + 开发5h）→ 保留原有任务，并 **追加** 【请假调休】
+// 共享模块与「0-同步日报」技能复用同一份，保证两边归属规则完全一致。
+const LEAVE = (() => {
+  try { return require('../sync-daily-report/leave_task.js'); } catch (e) { return null; }
+})();
+const REPORT_DB = LEAVE ? LEAVE.REPORT_DB : '1a9c4392-b5ae-48f4-aa3b-e05135215dce';
+const USER_MAP = {
+  "7b8d78bb-6099-4aa4-8f10-e8dfab37197e": "马少平",
+  "050fae93-4c3e-4596-80f2-21c3fb100b07": "周彦佐",
+  "ac9b1b06-4ed3-49b3-a2e1-d594252d2b99": "郑志伟",
+  "1f0e0e61-dc10-4399-8074-b8e5f6e074a6": "李明",
+  "94eb3da4-35cb-4a72-81b7-623ec15e649d": "张威",
+};
+const getPersonName = uid => USER_MAP[uid] || `未知(${uid ? uid.slice(0, 8) : '无'})`;
+
+// ===== 执行结果落盘（2026-09-23 新增，供 notify_log.js 发到日志群）=====
+// 写到这里而不是技能目录，避免污染技能仓库；两边路径必须保持一致。
+const RESULT_OUT = process.env.ADD_TEMPLATE_RESULT || path.join(os.tmpdir(), 'add_template_result.json');
+let resultWritten = false;
+function writeResult(obj) {
+  try {
+    fs.writeFileSync(RESULT_OUT, JSON.stringify({ ts: Date.now(), targetDate: TARGET_DATE, ...obj }, null, 2), 'utf8');
+    resultWritten = true;
+  } catch (e) {
+    // 结果文件写失败不该影响建模版本身，只在控制台提示。
+    console.log(`WARN: 写执行结果失败：${e.message}`);
+  }
+}
+// 兜底：万一脚本在没走完任何正常分支的情况下退出（异常、被杀），也留一条记录，
+// 免得日志群里没动静、或一直显示上一次的旧结果。
+process.on('exit', () => {
+  if (resultWritten) return;
+  try {
+    fs.writeFileSync(RESULT_OUT, JSON.stringify(
+      { ts: Date.now(), targetDate: TARGET_DATE, status: 'error', error: '脚本中途退出，未走完正常分支' }, null, 2), 'utf8');
+  } catch (e) { /* 忽略 */ }
+});
 
 function callAPI(method, path, body) {
   const bodyPath = `C:\\Users\\HONOR\\AppData\\Local\\Temp\\flowus_api_${Date.now()}_${Math.random().toString(36).substr(2,5)}.json`;
@@ -91,6 +134,7 @@ try {
 } catch (e) {
   // 查询失败（含 401 认证失效）绝不输出 NO_SOURCE_DATA
   console.log(`AUTH_ERROR: ${e.message}`);
+  writeResult({ status: 'auth_error', error: e.message });
   process.exit(2);
 }
 
@@ -144,10 +188,12 @@ function deleteRecordsWithReverse(pageIds) {
   return { delOk, delFail, revOk, revFail };
 }
 
+let deletedInfo = null;   // skip 模式下的删除结果，写进执行结果文件
 if (!SKIP_CHECK) {
-  const hasTargetData = records.some(r => getAutoDate(r) === TARGET_DATE);
-  if (hasTargetData) {
+  const existingRecords = records.filter(r => getAutoDate(r) === TARGET_DATE);
+  if (existingRecords.length) {
     console.log('HAS_DATA');
+    writeResult({ status: 'has_data', existingCount: existingRecords.length });
     process.exit(0);
   }
 } else {
@@ -158,6 +204,7 @@ if (!SKIP_CHECK) {
     const { delOk, delFail, revOk, revFail } = deleteRecordsWithReverse(existingRecords.map(r => r.id));
     console.log(`DELETED: ${delOk} ok, ${delFail} fail`);
     console.log(`REVERSE_CLEANED: ${revOk} ok, ${revFail} fail`);
+    deletedInfo = { ok: delOk, fail: delFail, reverseOk: revOk, reverseFail: revFail };
   }
 }
 
@@ -170,10 +217,27 @@ if (beforeTarget.length === 0) {
   const auth = checkAuth();
   if (!auth.ok) {
     console.log(`AUTH_ERROR: whoami failed - ${auth.error}`);
+    writeResult({ status: 'auth_error', error: `whoami failed - ${auth.error}` });
     process.exit(2);
   }
   console.log('NO_SOURCE_DATA');
+  writeResult({ status: 'no_source' });
   process.exit(0);
+}
+
+// 分页查询（供请假调休模块复用）
+function queryDBAll(dbId, body) {
+  let all = [], cur = null;
+  while (true) {
+    const b = { ...body };
+    if (cur) b.start_cursor = cur;
+    const r = callAPI('POST', `/v2/databases/${dbId}/query`, b);
+    if (!r.ok || !r.data) throw new Error('查询失败：' + JSON.stringify(r.error || r).slice(0, 150));
+    all = all.concat(r.data.results || []);
+    if (!r.data.has_more) break;
+    cur = r.data.next_cursor;
+  }
+  return all;
 }
 
 const byDate = {};
@@ -182,7 +246,77 @@ beforeTarget.forEach(r => {
   byDate[r.autoDate].push(r.taskId);
 });
 const sourceDate = Object.keys(byDate).sort().reverse()[0];
-const taskIds = byDate[sourceDate];
+let taskIds = byDate[sourceDate];
+
+// ===== 请假 / 调休覆盖 =====
+// 目标日某人是请假/调休时：全天请假 → 用【请假调休】替换该人从源日期复制来的任务；
+// 部分请假 → 保留原有任务并追加【请假调休】。模块缺失或查询失败时静默降级为原行为。
+if (LEAVE) {
+  try {
+    const d = String(TARGET_DATE).replace(/-/g, '/');
+    const rpt = queryDBAll(REPORT_DB, {
+      filter: { and: [{ property: '日期', date: { on_or_after: d } }, { property: '日期', date: { on_or_before: d } }] },
+      page_size: 100,
+    });
+    const byPerson = {};
+    for (const r of rpt) {
+      const person = getPersonName(r.created_by && r.created_by.id ? r.created_by.id : '');
+      if (person.startsWith('未知') || person === '张威') continue;
+      for (let i = 1; i <= 3; i++) {
+        const proj = r.properties[`项目-${i}`] && r.properties[`项目-${i}`].select ? (r.properties[`项目-${i}`].select.name || '') : '';
+        const taskName = ((r.properties[`任务名称-${i}`] || {}).rich_text || []).map(x => x.plain_text || '').join('');
+        const prog = ((r.properties[`进展说明-${i}`] || {}).rich_text || []).map(x => x.plain_text || '').join('');
+        const hrs = (r.properties[`任务工时-${i}`] || {}).number || 0;
+        if (!proj && !hrs) continue;
+        (byPerson[person] = byPerson[person] || []).push({
+          project: proj, projectNorm: LEAVE.normProject(proj), taskName, prog, hours: hrs,
+        });
+      }
+    }
+    const ctx = { callAPI, queryDB: queryDBAll, getPersonName };
+    // 源任务的负责人（用于判断“该人全天请假时该剔除哪些任务”）
+    const ownerOf = {};
+    for (const tid of taskIds) {
+      const t = callAPI('GET', `/v2/pages/${tid}`, {});
+      ownerOf[tid] = (t.ok && t.data) ? ((t.data.properties['负责人'] || {}).select || {}).name || '' : '';
+    }
+    const leaveTaskOf = {};
+    const allDayPersons = new Set();
+    for (const [person, entries] of Object.entries(byPerson)) {
+      const leave = entries.filter(e => LEAVE.isLeaveText(e.taskName, e.prog, e.project));
+      if (!leave.length) continue;
+      const real = entries.filter(e => e.projectNorm && !LEAVE.isLeaveText(e.taskName, e.prog, e.project));
+      if (real.length === 0) allDayPersons.add(person);
+      // 归属项目（条目级）：自带真实项目直接用，选了「其它项目」则回溯最近真实项目中工时最大的
+      const projMap = new Map();
+      for (const e of leave) {
+        const rp = LEAVE.resolveProjectForEntry(ctx, e, person, TARGET_DATE);
+        if (!rp.ok) { console.log(`LEAVE_WARN: ${person} — ${rp.reason}`); continue; }
+        if (!projMap.has(rp.projectName)) projMap.set(rp.projectName, rp.reason);
+      }
+      for (const [projectName, reason] of projMap) {
+        const r1 = LEAVE.ensureLeaveTask(ctx, { person, projectName, apply: true });
+        if (!r1.ok || !r1.taskId) { console.log(`LEAVE_WARN: ${person} / ${projectName} — ${r1.reason || '未取到任务 id'}`); continue; }
+        console.log(`LEAVE: ${person} → 「${r1.projectName} / 其它 / 【请假调休】」${r1.created ? '（新建）' : '（复用）'}｜${reason}`);
+        leaveTaskOf[person] = r1.taskId;
+      }
+    }
+    if (Object.keys(leaveTaskOf).length) {
+      const rebuilt = [];
+      for (const tid of taskIds) {
+        const owner = ownerOf[tid];
+        if (owner && allDayPersons.has(owner)) continue;   // 全天请假：不照抄前一天任务
+        rebuilt.push(tid);
+      }
+      for (const tid of Object.values(leaveTaskOf)) if (!rebuilt.includes(tid)) rebuilt.push(tid);
+      console.log(`LEAVE_OVERRIDE: 原 ${taskIds.length} 条 → 现 ${rebuilt.length} 条（全天请假替换：${[...allDayPersons].join('、') || '无'}）`);
+      taskIds = rebuilt;
+    }
+  } catch (e) {
+    // 请假覆盖失败不该阻断建模版，降级为原行为
+    console.log(`LEAVE_WARN: 请假调休覆盖失败，按原逻辑复制 — ${e && e.message ? e.message : e}`);
+  }
+}
 
 console.log(`SOURCE_DATE: ${sourceDate}`);
 console.log(`COUNT: ${taskIds.length}`);
@@ -243,4 +377,12 @@ if (createdPages.length > 0) {
 
   console.log(`REVERSE_OK: ${reverseOk}`);
   console.log(`REVERSE_FAIL: ${reverseFail}`);
+
+  writeResult({
+    status: 'ok',
+    sourceDate, count: taskIds.length,
+    created: success, failed, reverseOk, reverseFail, deleted: deletedInfo,
+  });
+} else {
+  writeResult({ status: 'ok', created: 0, failed, reverseOk: 0, reverseFail: 0, deleted: deletedInfo });
 }

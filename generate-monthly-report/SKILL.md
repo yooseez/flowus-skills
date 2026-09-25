@@ -7,6 +7,17 @@ description: "从 FlowUs 日报数据生成项目月报 Word 文档。Invoke whe
 
 当用户说"生成月报"、"上月月报"或要求生成月报时，自动执行以下流程。
 
+> **📂 本文件的 `<技能目录>` 是哪个？**（本 SKILL.md 是多平台共用的同一份文件，路径必须按当前平台替换）
+>
+> | 当前平台 | `<技能目录>` = |
+> |---|---|
+> | **TRAE** | `C:\Users\HONOR\.trae-cn\skills\generate-monthly-report` |
+> | **WorkBuddy** | `C:\Users\HONOR\.workbuddy\skills\generate-monthly-report` |
+> | Git 仓库（备份/手动跑） | `D:\AI\flowus-skills-git\generate-monthly-report` |
+>
+> 三处是 junction 或副本关系，脚本内容一致；**执行时必须用自己平台那一条路径**，不要照抄另一平台的示例。
+> 公共模块 `_shared/` 在各自平台的**技能根目录**下（`...\skills\_shared\`），不在本技能目录内。
+
 ## 执行步骤
 
 ### 1. 确定月份
@@ -47,52 +58,62 @@ description: "从 FlowUs 日报数据生成项目月报 Word 文档。Invoke whe
 - 参数"7月15日到8月15日" → 生成2026/07/15到2026/08/15的月报
 - 参数"一季度" → 生成2026年1月1日到3月31日的月报
 
+### ⚠️ 认证：两套体系互不干扰（2026-09-25 用户明确）
+
+**TRAE 与 WorkBuddy 走的是两套认证，不要互相顶替：**
+
+| 平台 | 认证方式 |
+|---|---|
+| **TRAE** | 浏览器认证（网页授权）签发的令牌 |
+| **WorkBuddy** | Windows 用户级环境变量 `FLOWUS_TOKEN`（40 字符静态密钥） |
+
+> 关键：**不要用 `FLOWUS_TOKEN` 去顶替 TRAE 的令牌**。网页授权是「重新签发新令牌、旧令牌作废」，
+> 同属一套授权体系——一旦 WorkBuddy 侧动了它，TRAE 这个就失效。反过来也一样。
+
+脚本（`_shared/extract_common.py`）**默认完全不碰 `FLOWUS_TOKEN`**：先让 FlowUs CLI 自己认证
+（env 静态密钥 / OAuth / 由调用方环境决定），所以 **TRAE 等自带认证的环境无需任何改动**。
+
+| CLI 回报 | 脚本行为 |
+|---|---|
+| `Missing FlowUs token`（缺 token） | 从注册表 `HKCU\Environment\FLOWUS_TOKEN` 读一次（python `winreg`，进程内读、不落盘、不 spawn `reg.exe`）注入并**重试一次** —— 这是 **WorkBuddy 会话没继承环境变量**时的自愈路径，TRAE 走不到这里 |
+| `unauthorized`（令牌失效） | ❌ **不**用静态密钥顶替，直接报错退出 |
+
+**关闭兜底**：设 `FLOWUS_SKIP_TOKEN_FALLBACK=1` —— 脚本绝不读写 `FLOWUS_TOKEN`，完全交给 CLI 自己的认证。
+
+❌ **两侧都禁止**：执行 `flowus.exe login`；读取或检查 `C:\Users\HONOR\.flowus\credentials.json`；
+参照 TRAE 的 MCP 令牌配置（`%APPDATA%\TRAE SOLO CN\User\mcp.json` 里 URL 上的 `?token=`）；
+为认证去调 PowerShell 或手动 `export`。
+
+**0 条记录如何判断**（看退出码 + stderr，无需额外排查）：
+- 退出码 **2**，stderr 出现 `✖ 数据读取失败 —— 这【不是】"该月份无数据"` → 认证/权限问题
+- 退出码 **0**，stdout 出现 `ⓘ 本次查询成功（API 正常）` → 真·无数据，可如实告知用户
+
 ### 2. 提取数据
 
 运行参数化提取脚本（位于本技能目录下）：
 
 **按月份提取：**
 ```bash
-python "C:\Users\HONOR\Documents\flowus-skills\generate-monthly-report\extract_month.py" <YYYY-MM> <output_path>
+python "<技能目录>/extract_month.py" <YYYY-MM> <output_path>
 ```
 示例：
 ```bash
-python "C:\Users\HONOR\Documents\flowus-skills\generate-monthly-report\extract_month.py" 2026-07 "C:\Users\HONOR\AppData\Local\Temp\month_data.json"
+python "<技能目录>/extract_month.py" 2026-07 "<技能目录>/month_data.json"
 ```
 
 **按自定义日期范围提取（跨月场景如"7月15日到8月15日"）：**
 ```bash
-python "C:\Users\HONOR\Documents\flowus-skills\generate-monthly-report\extract_month.py" <YYYY-MM-DD> <YYYY-MM-DD> <output_path>
+python "<技能目录>/extract_month.py" <YYYY-MM-DD> <YYYY-MM-DD> <output_path>
 ```
 示例：
 ```bash
-python "C:\Users\HONOR\Documents\flowus-skills\generate-monthly-report\extract_month.py" 2026-07-15 2026-08-15 "C:\Users\HONOR\AppData\Local\Temp\month_data.json"
+python "<技能目录>/extract_month.py" 2026-07-15 2026-08-15 "<技能目录>/month_data.json"
 ```
 
 **⚠️ 人员完整性校验**：脚本运行后检查输出，如果出现 `WARNING: Found unmapped persons!`：
-1. 根据输出的 uid，在 `extract_month.py` 的 `USER_MAP` 中添加映射（格式：`uid → "岗位 姓名"`）
+1. 根据输出的 uid，在 `_shared/extract_common.py` 的 `USER_MAP` 中添加映射（格式：`uid → "岗位 姓名"`）。**不要再改 `extract_month.py`**——它只是薄封装，里面没有 USER_MAP
 2. 重新运行提取脚本
 3. **不得带着警告直接生成报告**
-
-> **⚠️ 认证：脚本不固化认证方式，只在 CLI 自己没法认证时才兜底**
->
-> 脚本**默认完全不碰 `FLOWUS_TOKEN`**——先让 FlowUs CLI 自己认证（env 静态密钥 / OAuth / 由调用方环境决定），行为与改造前一致，因此 **TRAE 等自带认证的环境无需任何改动**。
->
-> 只有当 CLI **明确回报「缺少 token」**时，脚本才从注册表 `HKCU\Environment\FLOWUS_TOKEN` 读一次（python `winreg`，进程内读、不落盘、不 spawn `reg.exe`）注入并**重试一次**。这就是 WorkBuddy 会话没继承环境变量时的自愈路径，stdout 会打印 `[auth] CLI 报缺少 token，已从注册表读取 FLOWUS_TOKEN（长度 40）并重试一次`。
->
-> **关闭兜底**（如 TRAE 要完全走自己的认证）：设 `FLOWUS_SKIP_TOKEN_FALLBACK=1`，脚本绝不读写 `FLOWUS_TOKEN`，直接把 CLI 原始报错交回。
->
-> ❌ **禁止事项**（WorkBuddy 侧一律不走网页认证 / OAuth 那条路）：
-> - 不要执行 `flowus.exe login`
-> - 不要读取或检查 `C:\Users\HONOR\.flowus\credentials.json`
-> - 不要参照 TRAE 的 MCP 令牌配置（`%APPDATA%\TRAE SOLO CN\User\mcp.json` 里 URL 上的 `?token=`）
-> - 不要为了认证去调 PowerShell / 手动 `export` —— 脚本自己会读，多此一举还容易把令牌搞失效
->
-> 原因：网页授权是"重新签发新令牌、旧令牌作废"，同属一套授权体系，动它就会把静态密钥方案连带搞坏。
->
-> **0 条记录如何判断**：脚本已内置区分，看**退出码 + stderr** 即可，无需再做任何认证排查——
-> - 退出码 **2**，stderr 出现 `✖ 数据读取失败 —— 这【不是】"该日期无数据"` → 认证/权限问题。唯一处理方式：请用户确认 Windows **用户级**环境变量 `FLOWUS_TOKEN` 已配置（40 字符静态密钥），配好后重跑即可
-> - 退出码 **0**，stdout 出现 `ⓘ 本次查询成功（API 正常），该日期范围确实没有日报记录。` → 真·无数据，可如实告知用户
 
 ### 3. 生成 Word 文档
 
@@ -100,20 +121,20 @@ python "C:\Users\HONOR\Documents\flowus-skills\generate-monthly-report\extract_m
 
 **按月份生成：**
 ```bash
-node "C:\Users\HONOR\Documents\flowus-skills\generate-monthly-report\gen_month_docx.js" <start_YYYY-MM-DD> <end_YYYY-MM-DD> <data_file>
+node "<技能目录>/gen_month_docx.js" <YYYY-MM> <data_file>
 ```
 示例：
 ```bash
-node "C:\Users\HONOR\Documents\flowus-skills\generate-monthly-report\gen_month_docx.js" 2026-07-01 2026-07-31 "C:\Users\HONOR\AppData\Local\Temp\month_data.json"
+node "<技能目录>/gen_month_docx.js" 2026-07 "<技能目录>/month_data.json"
 ```
 
 **按自定义日期范围生成（跨月场景如"7月15日到8月15日"）：**
 ```bash
-node "C:\Users\HONOR\Documents\flowus-skills\generate-monthly-report\gen_month_docx.js" <start_YYYY-MM-DD> <end_YYYY-MM-DD> <data_file>
+node "<技能目录>/gen_month_docx.js" <YYYY-MM-DD> <YYYY-MM-DD> <data_file>
 ```
 示例：
 ```bash
-node "C:\Users\HONOR\Documents\flowus-skills\generate-monthly-report\gen_month_docx.js" 2026-07-15 2026-08-15 "C:\Users\HONOR\AppData\Local\Temp\month_data.json"
+node "<技能目录>/gen_month_docx.js" 2026-07-15 2026-08-15 "<技能目录>/month_data.json"
 ```
 
 - 生成脚本内置日期范围过滤，即使数据文件包含范围外的记录也只统计目标范围
@@ -125,11 +146,27 @@ node "C:\Users\HONOR\Documents\flowus-skills\generate-monthly-report\gen_month_d
 
 ## 关键规则
 
+### 脚本结构（2026-09-25 重构：公共逻辑已抽取）
+
+| 文件 | 作用 | 改动时的影响面 |
+|------|------|----------------|
+| `extract_month.py` | **入口，薄封装**。只做参数解析（月份模式 / 范围模式）+ 调 `run()` + 打印结果 | 只影响月报 |
+| `_shared/extract_common.py` | **公共逻辑都在这里**：FlowUs `api call`、认证兜底、记录解析、工时/人天汇总、`USER_MAP` | **周报 + 月报同时生效** |
+| `gen_month_docx.js` | 生成 Word | 只影响月报 |
+
+- 入口保留 `extract_week.py` / `extract_month.py` **两个文件名**，因为技能要靠名字区分周报与月报（给 12 天日期时才知道该叫周报还是月报）。
+- **改逻辑改 `_shared/extract_common.py`，改两处入口文件的日子已经结束**。
+- `_shared/` 在技能根目录下（不是本技能目录内），两个技能都从 `../_shared` 引入：
+  ```python
+  sys.path.insert(0, os.path.join(SCRIPT_DIR, "..", "_shared"))
+  from extract_common import run
+  ```
+
 ### 人员映射
 - FlowUs "人员"字段是 formula 类型，API 返回 null，无法直接读取
 - 通过记录的 `created_by.id`（uid）配合 `USER_MAP` 映射到"岗位 姓名"
-- USER_MAP 中的完整映射参考 `extract_month.py` 中的注释
-- 添加新成员时：在 USER_MAP 中添加 `uid → "岗位 姓名"`
+- USER_MAP 中的完整映射参考 `_shared/extract_common.py` 中的注释
+- 添加新成员时：在 `_shared/extract_common.py` 的 USER_MAP 中添加 `uid → "岗位 姓名"`（只需改这一处，周报月报同时生效）
 
 ### 报告结构
 1. **封面**（纵向）：标题"项目月报（YYYY年M月）" + 实际数据日期范围 + 统计概览表
@@ -149,6 +186,10 @@ node "C:\Users\HONOR\Documents\flowus-skills\generate-monthly-report\gen_month_d
 - 人员总结行格式：`岗位 姓名  工时数工时（合计X人天），总共填报X次`（人天数=工时/8，整数不显示.0）
 - 项目总结行格式：`项目名  工时数工时（合计X人天），X人参与（人员列表）`
 - 项目内工作行格式：`项目名  工时数工时（合计X人天），填报X次`
+- ⭐ **项目内工作行的「含调休/请假N天」（2026-09-25 新增）**：若该项目下该人有请假类工时，在「合计X人天」**之后、「，填报X次」之前**插入 `，含调休N天`（或 `，含请假N天`）。示例：`杭州机场  68工时（合计8.5人天，含调休1天），填报18次`
+  - 措辞取该人该项目下请假条目的关键词：**含「调休」字样则显示「调休」，否则显示「请假」**（同时有两者时优先「调休」）。
+  - N = 该项目下该人的请假类工时 ÷ 8，四舍五入保留 1 位小数，**整数不显示 `.0`**（8h → `含调休1天`；4h → `含调休0.5天`）。
+  - 该项目无请假时不显示此段（与旧版输出保持一致）。
 - 工作描述带序号（1, 2, 3...），每人序号独立从1开始
 - 优先从进展说明提取工作内容，过滤纯进度状态（如`100%`、`（未开发）`），仅最后一天保留百分比
 - 进展说明过短（<6字）时，结合任务名称显示为"任务名称+进展内容"（无冒号）
@@ -167,10 +208,6 @@ node "C:\Users\HONOR\Documents\flowus-skills\generate-monthly-report\gen_month_d
 - 条目过多时：>15条只留主题组和类别标签；>8条先按多天保留（dropSecondaryTasks 删除部署/熟悉/初始化等次要任务）
 - 分类排序（sortByCategory/classifyWork）：按 功能开发→问题处理→文档→运维→需求沟通→售前→其他 排序，主题组排前，"运维及其他工作"永远最后
 - 排版格式化（formatWorkItems）：按类别排序后编号
-- 拼接清洁（trimEndPunct / stripTrailingEtc / cleanForJoin）：条目在参与 "、" 拼接前去掉末尾标点（。；，、！？等）与末尾"等"字
-  - 末尾标点会造成 "。、" 怪组合（如"…公司领导。、杭州机场…"）
-  - 末尾标点还会让 stripActionSuffix 的结尾匹配失效（如 "XX功能开发。" 剥不掉 "功能开发"）
-  - 条目自带"等"再拼 suffix 会重复成"等等"（如"…反馈等等功能开发" → "…反馈等功能开发"）
 - 不列出每日任务标签，因为任务标签加起来不等于总工时
 - 跨月时标题为纯"项目月报"（无括号日期），单月时为"项目月报（YYYY年M月）"
 
