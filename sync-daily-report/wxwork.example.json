@@ -1,0 +1,19 @@
+{
+  "_说明": "复制本文件为 wxwork.json（同目录）或 %USERPROFILE%\\.workbuddy\\wxwork.json，填入真实值。含密钥，切勿提交 git、切勿发群。⛔ 脚本只有「群机器人 Webhook」一条发送通道（2026-09-23 起钉钉与自建应用消息已移除），不需要 corpid/agentid/secret。",
+  "_robotwebhook": "⭐ 群机器人（企微 v4.1.41 起叫「消息推送」）。内部群 → 群设置 → 消息推送 → 添加 → 复制 Webhook 地址。该通道不校验企业可信IP，无需回调URL与公网服务器。仅内部群可用，Webhook 仅创建人可见",
+  "_runlogwebhook": "运行日志群（只有你自己 + yoosee 的免打扰小群）。每次运行都往这里发一条「【日报检查】+ 状态 + 明细」。不填则回退用 robotwebhook。",
+  "_confirmUrl": "人工确认页地址。填 localhost 时脚本会自动在本机拉起 server.js（端口 8790，只能在这台电脑打开）；填公网地址则视为已有外部服务、不再本机拉起。",
+  "_wxat": "可选。群机器人 @ 指定成员的企微 userid，逗号分隔",
+  "_wxatmobile": "可选。群机器人 @ 指定手机号，逗号分隔（非群成员会被脱敏）",
+  "robotwebhook": "https://qyapi.weixin.qq.com/cgi-bin/webhook/send?key=____________________",
+  "runlogwebhook": "",
+  "confirmUrl": "http://localhost:8790",
+  "_userWebhooks": "⭐「一人一群」定向推送：给每位成员单独建一个内部群（你 + 他 2 人，企微不支持只放自己的群），各添加一个「消息推送」，把 Webhook 填到这里（键＝姓名，必须和模版表「负责人」完全一致）。配了专属群的缺报者只收到自己那条，已交日报的人收不到任何消息；全配齐后脚本不再发大群。验证单人：node notify_missing.js --wx-user-test=马少平",
+  "userWebhooks": {
+    "马少平": "",
+    "郑志伟": "",
+    "周彦佐": ""
+  },
+  "wxat": "",
+  "wxatmobile": ""
+}

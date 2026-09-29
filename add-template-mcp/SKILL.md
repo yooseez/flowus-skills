@@ -103,9 +103,10 @@ run_mcp:
 
 MCP 返回结果直接进入上下文，解析所有分页合并后的记录：
 
-1. **计算自动实际日期**：
+1. **计算自动实际日期**（时区修复：created_time 需 +8h 转北京时间）：
    - 如果记录的 `填报日期` 有值 → 取 `填报日期`（格式化为 `YYYY-MM-DD`）
-   - 如果 `填报日期` 为空 → 取 `created_time` 的日期部分
+   - 如果 `填报日期` 为空 → 取 `created_time` **加 8 小时**后的日期部分（北京时间）
+   > **关键修复**：FlowUs API 返回的 `created_time` 是 UTC 时间。凌晨创建的记录 UTC 日期是前一天，直接取日期部分会导致误判为前一天，从而选错源数据。必须先 `+8h` 转换为北京时间再取日期。
 
 2. **检查目标日期是否已有数据**：
    - 遍历所有记录，如果有任何记录的自动实际日期 === 目标日期 → 输出 `HAS_DATA`
@@ -120,13 +121,25 @@ MCP 返回结果直接进入上下文，解析所有分页合并后的记录：
 | 情况 | 操作 |
 |---|---|
 | 目标日期已有数据 | 用纯文本提示用户已有数据，用户回复"继续"则跳过检查直接创建 |
-| 3天内无源数据 | 提示用户无数据可复制，终止 |
+| 3天内无源数据 | **禁止直接终止**，先执行认证检查（见下方"无数据时优先检查认证"），认证通过后才告知用户无数据可复制 |
 | 找到源数据 | 进入第 5 步创建记录 |
 
 **HAS_DATA 交互流程（不使用 AskUserQuestion）**：
 1. 用纯文本告知用户"今天已有数据，回复'继续'可跳过检查直接创建"
-2. 用户回复"继续"后，跳过检查直接进入第 5 步
+2. 用户回复"继续"后，先删除目标日期的已有记录并清理双向关联，再进入第 5 步创建新记录
 3. 用户未回复"继续"则视为取消，不再创建记录
+
+> **关键修复（删除时清理双向关联）**：跳过检查时需先删除目标日期已有记录。删除前必须读取每条记录的 `任务名称` 关联的原任务 ID，然后从原任务的 `同步任务名称` 字段中移除待删除记录的 ID，最后将记录移到回收站（`in_trash: true`）。否则回收站记录仍被 rollup 公式统计，导致公式错误。
+>
+> **删除流程**：
+> 1. 对每条待删除记录，调用 `get_page` 获取其 `任务名称` 关联的原任务 ID
+> 2. 按 `taskId` 分组，对每个原任务调用 `get_page` 读取 `同步任务名称` 当前关联列表
+> 3. 从列表中移除所有待删除记录的 ID，调用 `update_page` 更新原任务的 `同步任务名称`
+> 4. **删除记录需借助 CLI**：MCP 的 `update_page` 不支持 `in_trash` 字段（只接受 `icon`、`cover`、`properties`），需用 CLI 执行删除：
+>    ```
+>    flowus.exe --json api call PATCH /v2/pages/<page_id> --body <body_file.json>
+>    ```
+>    body 文件内容：`{"in_trash": true}`
 
 ### 5. 批量创建记录（并行 MCP 调用）
 
@@ -202,13 +215,28 @@ run_mcp:
 | 条件 | 自动实际日期 |
 |---|---|
 | "填报日期"有值 | 取"填报日期" |
-| "填报日期"为空 | 取 `created_time`（日期部分） |
+| "填报日期"为空 | 取 `created_time` **+8h** 后的日期部分（北京时间） |
+
+> **时区修复**：FlowUs API 返回的 `created_time` 是 UTC 时间。凌晨创建的记录 UTC 日期是前一天，直接取日期部分会导致误判。必须先 `+8h` 转换为北京时间再取日期。
 
 ## 不复制的字段
 
 实际投入（小时）、开始时间、结束时间、No. 等字段均不设置。
 
-## 与 CLI 版本对比
+## ⚠️ 无数据时优先检查认证
+
+当查询返回 **0 条记录** 或所有记录的自动实际日期都晚于目标日期时，**禁止直接判定为"无数据"并终止**。必须先执行以下认证检查：
+
+1. **检查 MCP 认证**：调用 `run_mcp`（`server_name: "mcp_flowus"`, `tool_name: "get_current_user"`），如果返回空或报错则 MCP 认证失效
+2. **检查 FLOWUS_TOKEN 环境变量**：如果其他程序（如 WorkBuddy）设置了 FLOWUS_TOKEN 环境变量，可能覆盖 MCP 的认证 token 导致查询返回空结果
+3. **回退到 CLI 验证**：运行 `C:\Users\HONOR\AppData\Local\Programs\FlowUs\bin\flowus.exe --json api call POST /v2/databases/bc84d926-8df2-4662-9751-6a35e8761d14/query --body <body_file>` 对比结果
+
+**认证问题处理**：
+- MCP `get_current_user` 返回空 → MCP 认证失效，尝试设置 `FLOWUS_TOKEN` 环境变量为有效的 OAuth access token 后重启 TRAE
+- MCP 返回空 `[]` 但 CLI 正常 → MCP 服务器认证问题，回退使用 CLI 版本（`add-template` 技能（显示名「0-添加模版（CLI）」））
+- CLI 也返回 401/403 → 参见 CLI 版本的认证处理
+
+**只有在认证检查通过后**，才告知用户"该日期范围内确实无数据可复制"。
 
 | 对比项 | CLI 版本（add-template） | MCP 版本（add-template-mcp） |
 |---|---|---|
@@ -221,9 +249,13 @@ run_mcp:
 
 ## 注意事项
 
-- 如果 MCP 返回空结果 `[]`，可能是 MCP 服务器故障，可回退到 CLI 版本（`add-template` 技能）
-- MCP 创建记录使用的是 MCP 关联的应用身份（trae2 机器人）
+- **MCP 认证问题**：MCP 服务器返回空 `[]` 时，可能是认证 token 过期。MCP 服务器的认证由 TRAE 内部管理，与 CLI 的 OAuth 凭证（`~/.flowus/credentials.json`）独立。如果 MCP 持续返回空结果：
+  1. 检查 `get_current_user` 是否返回空 — 若空则 MCP 认证失效
+  2. 尝试设置 `FLOWUS_TOKEN` 环境变量为有效的 OAuth access token，然后重启 TRAE
+  3. 如仍无效，回退到 CLI 版本（`add-template` 技能（显示名「0-添加模版（CLI）」））
 - `填报日期` 的 `date` 属性需要包含 `end: null` 和 `time_zone: null`
-- **工具命名规则**：新版本 MCP 使用小写下划线命名（`query_database`、`create_page`、`update_page`、`get_page`）
+- **工具命名规则**：MCP 使用小写下划线命名（`query_database`、`create_page`、`update_page`、`get_page`）
 - **参数结构差异**：`query_database` 的 `page_size`、`start_cursor` 是顶层参数，`create_page` / `update_page` 的所有参数都在 `body` 内
 - **分页查询**：`has_more` 为 true 时用 `next_cursor` 作为 `start_cursor` 继续查询，确保获取全部数据后再做 HAS_DATA 检查
+- **FlowUs API 删除字段**：使用 `in_trash: true`（不是 `archived: true`）将记录移到回收站。MCP 的 `update_page` 不支持此字段，需用 CLI 执行删除
+- **MCP `update_page` 限制**：body 只接受 `icon`、`cover`、`properties` 三个字段，不支持 `in_trash`、`archived` 等顶层字段

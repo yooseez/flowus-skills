@@ -12,7 +12,7 @@ const {
 const args = process.argv.slice(2);
 const rangeStart = args[0] || "2026-07-01";
 const rangeEnd = args[1] || "2026-07-31";
-const inputFile = args[2] || "c:\\Users\\HONOR\\.trae-cn\\work\\6a5dc6c8f3dd409051bb8edc\\combined_data.json";
+const inputFile = args[2] || "C:\\Users\\HONOR\\AppData\\Local\\Temp\\month_data.json";
 const [startYr, startMo, startDy] = rangeStart.split("-").map(Number);
 const [endYr, endMo, endDy] = rangeEnd.split("-").map(Number);
 
@@ -101,6 +101,29 @@ const sortedProjects = Object.keys(projHours).sort((a, b) => {
   return projHours[b] - projHours[a];
 });
 const sortedPersons = Object.keys(personHours).sort();
+
+// ===== 请假 / 调休工时（人 → 项目），用于个人工作总结的「含调休N天」（2026-09-25 用户定稿）=====
+// 统计口径：日报条目里「任务名称」命中请假/调休关键词的工时，按该条目所选项目归集；
+// 天数 = 工时 / 8，保留 1 位小数（整数不显示小数）。用词跟随日报原文：出现「调休」用调休，否则用请假。
+const LEAVE_RE = /请假|调休|休假|年休|事假|病假|婚假|产假|陪产|丧假/;
+const personProjLeave = {};   // person -> 项目(已去〓) -> { hours, kinds: Set }
+for (const r of data) {
+  personProjLeave[r.person] = personProjLeave[r.person] || {};
+  for (const p of r.projects) {
+    if (!p.task || !LEAVE_RE.test(p.task)) continue;
+    const key = cleanName(p.project);
+    const slot = personProjLeave[r.person][key] || (personProjLeave[r.person][key] = { hours: 0, kinds: new Set() });
+    slot.hours += p.hours || 0;
+    slot.kinds.add(/调休/.test(p.task) ? '调休' : '请假');
+  }
+}
+function leaveDaysText(person, projName) {
+  const slot = personProjLeave[person] && personProjLeave[person][projName];
+  if (!slot || slot.hours <= 0) return '';
+  const d = Math.round(slot.hours / 8 * 10) / 10;
+  const word = slot.kinds.has('调休') ? '调休' : '请假';
+  return `，含${word}${Number.isInteger(d) ? d : d.toFixed(1)}天`;
+}
 
 // ============ Helper Functions ============
 const FONT = "Microsoft YaHei";
@@ -268,6 +291,23 @@ function removeColons(text) {
   return text.replace(/(.{1,4})：/g, "$1").replace(/：/g, "，");
 }
 
+// 去掉条目末尾的标点与空白（句号/分号/逗号/顿号/问号等）
+// 1) 条目会以 "、" 拼接成 "A、B、C等X"，若条目自带末尾句号会产生 "。、" 这类怪组合
+// 2) 末尾标点会让 stripActionSuffix 的 "$" 结尾匹配失效（如 "XX功能开发。" 剥不掉 "功能开发"）
+function trimEndPunct(text) {
+  return String(text == null ? "" : text).replace(/[。．.；;，,、！!?？:：\s]+$/, "");
+}
+
+// 去掉条目末尾的"等"字：拼接时末尾的"等"由统一 suffix 提供，条目自带"等"会产生"等等"
+function stripTrailingEtc(text) {
+  return String(text == null ? "" : text).replace(/等+$/, "");
+}
+
+// 参与 "、" 拼接前的统一清洗
+function cleanForJoin(text) {
+  return stripTrailingEtc(trimEndPunct(text));
+}
+
 // Group thematically related items: when 3+ items share a common prefix (>=2 chars),
 // merge ALL into one summary. If more than 5 items, list the 5 shortest.
 // Determine suffix based on task nature
@@ -300,7 +340,7 @@ function combineSuffix(prefix, suffix) {
 // Strip common action suffixes from an item to get the differentiating part
 // Returns empty string if result is a common action word (caller should check)
 function stripActionSuffix(item) {
-  const stripped = item
+  const stripped = trimEndPunct(item)
     .replace(/(模块)?(功能)?开发$/, "")
     .replace(/问题?处理$/, "")
     .replace(/(功能)?(开发|调整|改造|优化|修改|完善|测试|验证|发布)$/, "")
@@ -378,16 +418,16 @@ function groupThemes(items) {
           });
           const meaningfulParts = parts.filter(p => isMeaningfulPart(p));
           if (meaningfulParts.length === groupItems.length) {
-            const label = `${displayName}${meaningfulParts.join("、")}等${suffix}`;
+            const label = `${displayName}${meaningfulParts.map(cleanForJoin).join("、")}等${suffix}`;
             result.push(label);
             explicitListingMap.set(label, combineSuffix(displayName, suffix));
           } else {
             const itemsToList = groupItems.sort((a, b) => a.length - b.length).slice(0, 7);
-            result.push(`${combineSuffix(displayName, suffix)}：包括${itemsToList.join("、")}等`);
+            result.push(`${combineSuffix(displayName, suffix)}：包括${itemsToList.map(cleanForJoin).join("、")}等`);
           }
         } else {
           const itemsToList = groupItems.sort((a, b) => a.length - b.length).slice(0, 7);
-          result.push(`${displayName}相关工作：包括${itemsToList.join("、")}等`);
+          result.push(`${displayName}相关工作：包括${itemsToList.map(cleanForJoin).join("、")}等`);
         }
         groupIndices.forEach(idx => used.add(idx));
       }
@@ -437,16 +477,16 @@ function mergeByPrefix(items) {
             });
             const meaningfulParts = parts.filter(p => isMeaningfulPart(p));
             if (meaningfulParts.length === group.length) {
-              const label = `${prefix}${meaningfulParts.join("、")}等${dynSuffix}`;
+              const label = `${prefix}${meaningfulParts.map(cleanForJoin).join("、")}等${dynSuffix}`;
               result.push(label);
               explicitListingMap.set(label, combineSuffix(prefix, dynSuffix));
             } else {
               const itemsToList = group.sort((a, b) => a.length - b.length).slice(0, 7);
-              result.push(`${combineSuffix(prefix, dynSuffix)}：包括${itemsToList.join("、")}等`);
+              result.push(`${combineSuffix(prefix, dynSuffix)}：包括${itemsToList.map(cleanForJoin).join("、")}等`);
             }
           } else {
             const itemsToList = group.sort((a, b) => a.length - b.length).slice(0, 7);
-            result.push(`${prefix}相关工作：包括${itemsToList.join("、")}等`);
+            result.push(`${prefix}相关工作：包括${itemsToList.map(cleanForJoin).join("、")}等`);
           }
         }
         used.add(i);
@@ -524,7 +564,7 @@ function mergePairedGroups(items) {
       const allParts = [...new Set([...iParts, ...jParts])];
       allParts.sort((a, b) => a.length - b.length);
       if (allParts.length >= 2) {
-        const newLabel = `${prefix}${allParts.join("、")}等${suffix}`;
+        const newLabel = `${prefix}${allParts.map(cleanForJoin).join("、")}等${suffix}`;
         result.push(newLabel);
         explicitListingMap.set(newLabel, combineSuffix(prefix, suffix));
       } else {
@@ -695,6 +735,7 @@ function buildPersonSummary() {
           if (date !== lastDayStr) {
             cleaned = stripPercentage(cleaned);
           }
+          cleaned = trimEndPunct(cleaned);
           if (isProgressMeaningful(cleaned) && cleaned.length < 50) {
             if (!seen.has(cleaned)) {
               seen.add(cleaned);
@@ -724,6 +765,9 @@ function buildPersonSummary() {
       // Filter trivial tasks (just submitting scripts/code)
       const filteredWork = filterTrivialTasks(mainWork);
       if (filteredWork.length > 0) mainWork = filteredWork;
+
+      // Save raw work items before maintenance preprocessing (for 运维-only fallback)
+      const rawWorkItems = [...mainWork];
 
       // Pre-process maintenance tasks ("处理" prefix → 运维)
       mainWork = preprocessMaintenanceTasks(mainWork);
@@ -763,6 +807,15 @@ function buildPersonSummary() {
       // If still many, drop secondary/setup tasks
       if (grouped.length > 8) {
         grouped = dropSecondaryTasks(grouped);
+      }
+      // If only "运维及其他工作" remains, expand with a few specific items from raw data
+      if (grouped.length === 1 && grouped[0] === "运维及其他工作" && rawWorkItems.length > 1) {
+        const specificItems = rawWorkItems
+          .filter(item => !item.startsWith("处理"))
+          .slice(0, 3);
+        if (specificItems.length > 0) {
+          grouped = [...specificItems, "运维及其他工作"];
+        }
       }
       const items = formatWorkItems(grouped);
 
@@ -862,7 +915,7 @@ function mergeRelatedGroupsForSuffix(items, suffix, excludeSuffixes = []) {
       }
       const allDetails = mergeList.map(m => m.d).filter(d => d);
       if (allDetails.length > 0) {
-        const content = allDetails.map(d => d.replace(/^：包括/, "").replace(/等$/, "")).join("、");
+        const content = allDetails.map(d => cleanForJoin(d.replace(/^：包括/, "").replace(/等$/, ""))).join("、");
         result.push(`${newLabel}：包括${content}等`);
       } else {
         result.push(newLabel);
@@ -910,7 +963,7 @@ function mergeSubCategories(items) {
       if (absorbedDetails.length > 0) {
         const existingDetails = getItemDetails(broadItem);
         const existingContent = existingDetails ? existingDetails.replace(/^：包括/, "").replace(/等$/, "") : "";
-        const allContent = [...absorbedDetails, existingContent].filter(d => d).join("、");
+        const allContent = [...absorbedDetails, existingContent].filter(d => d).map(cleanForJoin).join("、");
         broadItem = allContent ? `${broadLabel}：包括${allContent}等` : broadLabel;
       }
       filtered.push(broadItem);
@@ -968,12 +1021,27 @@ function simplifySummary(items, keepDetails = false) {
     const others = simplified.filter(item => !prodGroups.includes(item));
     const allDetails = prodGroups.map(getItemDetails).filter(d => d);
     if (allDetails.length > 0) {
-      const content = allDetails.map(d => d.replace(/^：包括/, "").replace(/等$/, "")).join("、");
+      const content = allDetails.map(d => cleanForJoin(d.replace(/^：包括/, "").replace(/等$/, ""))).join("、");
       others.push(`运维相关问题处理：包括${content}等`);
     } else {
       others.push("运维相关问题处理");
     }
     simplified = others;
+  }
+  // Absorb any item containing "运维" keyword into "运维及其他工作"
+  const opsItems = simplified.filter(item => {
+    const label = getItemLabel(item);
+    return label !== "运维及其他工作" && label.includes("运维");
+  });
+  if (opsItems.length > 0) {
+    const hasBroad = simplified.some(item => getItemLabel(item) === "运维及其他工作");
+    const others = simplified.filter(item => !opsItems.includes(item));
+    if (hasBroad || others.some(item => getItemLabel(item).includes("运维"))) {
+      simplified = others;
+    } else {
+      simplified = others;
+      simplified.push("运维及其他工作");
+    }
   }
   // Merge related thematic groups
   simplified = mergeRelatedGroups(simplified);
@@ -992,7 +1060,7 @@ function simplifySummary(items, keepDetails = false) {
         // Merge details from duplicate "运维及其他工作" items
         const d1 = getItemDetails(otherItem).replace(/^：包括/, "").replace(/等$/, "");
         const d2 = getItemDetails(item).replace(/^：包括/, "").replace(/等$/, "");
-        const combined = [d1, d2].filter(d => d).join("、");
+        const combined = [d1, d2].filter(d => d).map(cleanForJoin).join("、");
         otherItem = combined ? `运维及其他工作：包括${combined}等` : "运维及其他工作";
       }
     } else {
@@ -1092,6 +1160,16 @@ function buildProjectSummary() {
     items = groupThemes(items);
     items = simplifySummary(items);
     items = dropSecondaryTasks(items);
+
+    // If only "运维及其他工作" remains, expand with a few specific items from raw data
+    if (items.length === 1 && items[0] === "运维及其他工作" && uniqueItems.length > 1) {
+      const specificItems = uniqueItems
+        .filter(item => !item.startsWith("处理"))
+        .slice(0, 3);
+      if (specificItems.length > 0) {
+        items = [...specificItems, "运维及其他工作"];
+      }
+    }
 
     // If still many, drop single-person minor tasks (keep thematic groups and category labels)
     const categoryLabels = ["编写说明文档", "操作指引沟通"];
@@ -1268,7 +1346,7 @@ const personSummaryElements = workSummaries.flatMap(({ person, totalHours, days,
     paras.push(new Paragraph({
       spacing: { before: 40, after: 20 },
       indent: { left: 120 },
-      children: [new TextRun({ text: `${name}  ${hours}工时（合计${pdStr(hours)}人天），填报${pdays}次`, font: FONT, size: 21, bold: true })],
+      children: [new TextRun({ text: `${name}  ${hours}工时（合计${pdStr(hours)}人天${leaveDaysText(person, name)}），填报${pdays}次`, font: FONT, size: 21, bold: true })],
     }));
     for (const item of items) {
       paras.push(new Paragraph({
