@@ -1,4 +1,4 @@
-const { spawnSync } = require('child_process');
+﻿const { spawnSync } = require('child_process');
 const fs = require('fs');
 const os = require('os');
 const path = require('path');
@@ -188,26 +188,7 @@ function deleteRecordsWithReverse(pageIds) {
   return { delOk, delFail, revOk, revFail };
 }
 
-let deletedInfo = null;   // skip 模式下的删除结果，写进执行结果文件
-if (!SKIP_CHECK) {
-  const existingRecords = records.filter(r => getAutoDate(r) === TARGET_DATE);
-  if (existingRecords.length) {
-    console.log('HAS_DATA');
-    writeResult({ status: 'has_data', existingCount: existingRecords.length });
-    process.exit(0);
-  }
-} else {
-  // 用户确认继续：先删除目标日期已有记录并清理双向关联
-  const existingRecords = records.filter(r => getAutoDate(r) === TARGET_DATE);
-  if (existingRecords.length > 0) {
-    console.log(`DELETING: ${existingRecords.length} existing records`);
-    const { delOk, delFail, revOk, revFail } = deleteRecordsWithReverse(existingRecords.map(r => r.id));
-    console.log(`DELETED: ${delOk} ok, ${delFail} fail`);
-    console.log(`REVERSE_CLEANED: ${revOk} ok, ${revFail} fail`);
-    deletedInfo = { ok: delOk, fail: delFail, reverseOk: revOk, reverseFail: revFail };
-  }
-}
-
+// ===== 第一步：从源数据中找出源日期和源任务 ID =====
 const beforeTarget = records
   .map(r => ({ autoDate: getAutoDate(r), taskId: r.properties['任务名称']?.relation?.[0]?.id }))
   .filter(r => r.autoDate < TARGET_DATE && r.taskId);
@@ -225,6 +206,114 @@ if (beforeTarget.length === 0) {
   process.exit(0);
 }
 
+const byDate = {};
+beforeTarget.forEach(r => {
+  if (!byDate[r.autoDate]) byDate[r.autoDate] = [];
+  byDate[r.autoDate].push(r.taskId);
+});
+const sourceDate = Object.keys(byDate).sort().reverse()[0];
+let taskIds = byDate[sourceDate];
+
+// ===== 第二步：检测目标日期已有记录，决定是否增量补建 =====
+// 规则：
+//   · 目标日无记录 → 正常全部创建
+//   · 目标日有记录，且所有任务都在源日任务集合里 → 增量补建缺失的
+//   · 目标日有记录，但有源日以外的陌生任务 → HAS_DATA 退出，需用户确认
+// 理由：添加模版只创建空行、不写工时，只要已有记录都是"应该有的"，补建剩余的就是安全的；
+//       有陌生任务说明目标日有人工调整过，不能擅自操作，交用户确认。
+const existingTaskIds = new Set();
+let deletedInfo = null;   // skip 模式下的删除结果，写进执行结果文件
+
+if (!SKIP_CHECK) {
+  // 查询目标日期已有记录（用 created_time 往前查 30 天，覆盖提前创建的情况）
+  let existingRecords = [];
+  try {
+    const d = new Date(TARGET_DATE + 'T00:00:00Z');
+    d.setUTCDate(d.getUTCDate() - 30);
+    const windowFrom = d.toISOString().split('T')[0].replace(/-/g, '/');
+    let allResults = [];
+    let startCursor = null;
+    while (true) {
+      const qb = {
+        filter: { timestamp: "created_time", created_time: { on_or_after: windowFrom } },
+        sorts: [{ timestamp: "created_time", direction: "ascending" }],
+        page_size: 100
+      };
+      if (startCursor) qb.start_cursor = startCursor;
+      const raw = callAPI('POST', `/v2/databases/${DB_ID}/query`, qb);
+      if (!raw.ok || !raw.data) throw new Error(`查询失败: ${raw.error?.message || JSON.stringify(raw).slice(0, 200)}`);
+      allResults = allResults.concat(raw.data.results);
+      if (!raw.data.has_more) break;
+      startCursor = raw.data.next_cursor;
+    }
+    existingRecords = allResults.filter(r => getAutoDate(r) === TARGET_DATE);
+  } catch (e) {
+    console.log(`EXISTING_CHECK_WARN: 查询目标日期记录出错（${e.message}），按无已有记录处理`);
+  }
+
+  if (existingRecords.length > 0) {
+    const srcTaskSet = new Set(taskIds);
+    const existingTids = existingRecords.map(r => r.properties['任务名称']?.relation?.[0]?.id).filter(Boolean);
+    const allMatch = existingTids.length > 0 && existingTids.every(tid => srcTaskSet.has(tid));
+
+    if (allMatch) {
+      // 已有记录全部是源日里的任务 → 增量补建缺失的
+      for (const tid of existingTids) existingTaskIds.add(tid);
+      console.log(`INCREMENTAL: 目标日期已有 ${existingRecords.length} 条/${existingTaskIds.size} 个任务，全部匹配源日任务 → 补建缺失的`);
+    } else {
+      // 有源日以外的陌生任务 → 需要用户确认
+      const unknownCount = existingTids.filter(tid => !srcTaskSet.has(tid)).length;
+      console.log('HAS_DATA');
+      writeResult({
+        status: 'has_data',
+        existingCount: existingRecords.length,
+        sourceDate,
+        sourceCount: taskIds.length,
+        unknownTasks: unknownCount,
+        reason: `存在 ${unknownCount} 个源日以外的任务，需确认`,
+      });
+      process.exit(0);
+    }
+  }
+} else {
+  // 用户确认继续（skip 模式）：先删除目标日期已有记录并清理双向关联
+  // 注意：skip 模式下直接用 records 里能找到的目标日记录，不强求 30 天全量
+  const existingRecords = records.filter(r => getAutoDate(r) === TARGET_DATE);
+  if (existingRecords.length > 0) {
+    console.log(`DELETING: ${existingRecords.length} existing records`);
+    const { delOk, delFail, revOk, revFail } = deleteRecordsWithReverse(existingRecords.map(r => r.id));
+    console.log(`DELETED: ${delOk} ok, ${delFail} fail`);
+    console.log(`REVERSE_CLEANED: ${revOk} ok, ${revFail} fail`);
+    deletedInfo = { ok: delOk, fail: delFail, reverseOk: revOk, reverseFail: revFail };
+  }
+}
+
+// ===== 过滤：负责人为"张威"的任务不复制 =====
+// 2026-10-10 用户要求：添加模版不用添加负责人是张威的模版
+const ownerOf = {};
+for (const tid of taskIds) {
+  const t = callAPI('GET', `/v2/pages/${tid}`, {});
+  ownerOf[tid] = (t.ok && t.data) ? ((t.data.properties['负责人'] || {}).select || {}).name || '' : '';
+}
+const beforeFilterCount = taskIds.length;
+taskIds = taskIds.filter(tid => ownerOf[tid] !== '张威');
+if (taskIds.length < beforeFilterCount) {
+  console.log(`FILTER_ZHANGWEI: 过滤掉张威的任务 ${beforeFilterCount - taskIds.length} 条，剩余 ${taskIds.length} 条`);
+}
+
+if (taskIds.length === 0) {
+  // 过滤后没有任务了
+  const auth = checkAuth();
+  if (!auth.ok) {
+    console.log(`AUTH_ERROR: whoami failed - ${auth.error}`);
+    writeResult({ status: 'auth_error', error: `whoami failed - ${auth.error}` });
+    process.exit(2);
+  }
+  console.log('NO_SOURCE_DATA');
+  writeResult({ status: 'no_source', reason: '过滤后无源任务' });
+  process.exit(0);
+}
+
 // 分页查询（供请假调休模块复用）
 function queryDBAll(dbId, body) {
   let all = [], cur = null;
@@ -239,14 +328,6 @@ function queryDBAll(dbId, body) {
   }
   return all;
 }
-
-const byDate = {};
-beforeTarget.forEach(r => {
-  if (!byDate[r.autoDate]) byDate[r.autoDate] = [];
-  byDate[r.autoDate].push(r.taskId);
-});
-const sourceDate = Object.keys(byDate).sort().reverse()[0];
-let taskIds = byDate[sourceDate];
 
 // ===== 请假 / 调休覆盖 =====
 // 目标日某人是请假/调休时：全天请假 → 用【请假调休】替换该人从源日期复制来的任务；
@@ -274,12 +355,7 @@ if (LEAVE) {
       }
     }
     const ctx = { callAPI, queryDB: queryDBAll, getPersonName };
-    // 源任务的负责人（用于判断“该人全天请假时该剔除哪些任务”）
-    const ownerOf = {};
-    for (const tid of taskIds) {
-      const t = callAPI('GET', `/v2/pages/${tid}`, {});
-      ownerOf[tid] = (t.ok && t.data) ? ((t.data.properties['负责人'] || {}).select || {}).name || '' : '';
-    }
+    // 源任务的负责人（已在外面获取，复用 ownerOf）
     const leaveTaskOf = {};
     const allDayPersons = new Set();
     for (const [person, entries] of Object.entries(byPerson)) {
@@ -302,14 +378,14 @@ if (LEAVE) {
       }
     }
     if (Object.keys(leaveTaskOf).length) {
-      const rebuilt = [];
-      for (const tid of taskIds) {
-        const owner = ownerOf[tid];
-        if (owner && allDayPersons.has(owner)) continue;   // 全天请假：不照抄前一天任务
-        rebuilt.push(tid);
+      // 2026-09-26 修复：全天请假不剔除普通任务，只追加请假调休任务
+      // 之前的逻辑是把请假人员的所有普通任务都删掉，只留请假调休——这是错的
+      // 正确行为：所有普通任务照常复制 + 请假的人追加一条请假调休
+      const rebuilt = [...taskIds];
+      for (const tid of Object.values(leaveTaskOf)) {
+        if (!rebuilt.includes(tid)) rebuilt.push(tid);
       }
-      for (const tid of Object.values(leaveTaskOf)) if (!rebuilt.includes(tid)) rebuilt.push(tid);
-      console.log(`LEAVE_OVERRIDE: 原 ${taskIds.length} 条 → 现 ${rebuilt.length} 条（全天请假替换：${[...allDayPersons].join('、') || '无'}）`);
+      console.log(`LEAVE_OVERRIDE: 原 ${taskIds.length} 条 → 现 ${rebuilt.length} 条（追加请假调休：${[...allDayPersons].join('、') || '无'}）`);
       taskIds = rebuilt;
     }
   } catch (e) {
@@ -321,10 +397,15 @@ if (LEAVE) {
 console.log(`SOURCE_DATE: ${sourceDate}`);
 console.log(`COUNT: ${taskIds.length}`);
 
-let success = 0, failed = 0;
+let success = 0, failed = 0, skipped = 0;
 const createdPages = [];
 
 for (const taskId of taskIds) {
+  // 已有任务跳过（增量补建）
+  if (existingTaskIds.has(taskId)) {
+    skipped++;
+    continue;
+  }
   const body = {
     parent: { database_id: DB_ID },
     properties: {
@@ -345,6 +426,7 @@ for (const taskId of taskIds) {
 }
 
 console.log(`CREATED: ${success}`);
+if (existingTaskIds.size > 0) console.log(`SKIPPED: ${skipped}（已有）`);
 console.log(`FAILED: ${failed}`);
 
 // 建立反向关联：把新记录 ID 添加到原任务的"同步任务名称"字段
@@ -381,8 +463,10 @@ if (createdPages.length > 0) {
   writeResult({
     status: 'ok',
     sourceDate, count: taskIds.length,
-    created: success, failed, reverseOk, reverseFail, deleted: deletedInfo,
+    created: success, failed, skipped,
+    incremental: existingTaskIds.size > 0,
+    reverseOk, reverseFail, deleted: deletedInfo,
   });
 } else {
-  writeResult({ status: 'ok', created: 0, failed, reverseOk: 0, reverseFail: 0, deleted: deletedInfo });
+  writeResult({ status: 'ok', created: 0, failed, skipped, incremental: existingTaskIds.size > 0, reverseOk: 0, reverseFail: 0, deleted: deletedInfo });
 }
